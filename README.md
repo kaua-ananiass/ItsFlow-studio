@@ -4,6 +4,7 @@
 # itsflow Studio
 
 **Nova identidade e assistente Sync:** [conheça as novidades do itsflow Studio](docs/ATUALIZACAO_ITSFLOW_2026-11-23.md).
+
 **AUTOMAÇÃO VISUAL · DESKTOP & WEB · STUDIO + AGENT + CHROME**
 
 Crie, teste e execute automações em blocos em sistemas Windows e páginas web — mesmo sem API.
@@ -39,7 +40,7 @@ O **itsflow Studio** transforma tarefas repetitivas em fluxos visuais reutilizá
 
 [Detalhes e verificações](docs/ATUALIZACAO_ITSFLOW_2026-11-23.md) · [Assistente desktop](docs/ASSISTENTE_DESKTOP.md) · [Demonstração Chrome](docs/CHROME_DEMONSTRACAO.md)
 
-> itsflow Studio é o novo nome do FlowDetect. Os identificadores internos e caminhos de dados continuam compatíveis. Esta branch atualiza o código; os instaladores das releases existentes continuam sendo as versões já publicadas.
+> itsflow Studio é o novo nome do FlowDetect. Os identificadores internos e caminhos de dados continuam compatíveis. Esta atualização renova o código e a identidade do projeto; os instaladores das releases existentes continuam sendo as versões já publicadas.
 
 ## Galeria
 > Imagens oficiais de releases anteriores. A interface atual pode apresentar alterações.
