@@ -1,16 +1,17 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs/promises');const path=require('node:path');const http=require('node:http');const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
-test('Studio opens chat and map without the retired catalog, Alterdata or chains',async()=>{
+test('Studio opens chat and map without the retired catalog, Alterdata, chains or recorder',async()=>{
  const web=path.resolve(__dirname,'../tauri_gerador/web');
   const server=http.createServer(async(req,res)=>{try{const file=path.resolve(web,'.'+new URL(req.url,'http://localhost').pathname.replace(/\/$/,'/index.html'));if(!file.startsWith(web+path.sep)){res.writeHead(403).end();return;}res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.woff2':'font/woff2'})[path.extname(file)]||'application/octet-stream');let body=await fs.readFile(file);if(path.basename(file)==='main.js')body=body.toString('utf8').replace('chatWorkspace=initChatGPT(', 'window.__guideTest={navigate:navigateChatGuidance,seed:applyPersistedRoadmap,zoom:setCommandMapZoom,assist:performAssistantOperation};chatWorkspace=initChatGPT(');res.end(body);}catch{res.writeHead(404).end();}});
- await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({headless:true});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({headless:true,executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe'});
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.addStyleTag({content:'#loginOverlay{display:none!important}.builder-shell{visibility:visible!important;pointer-events:auto!important;filter:none!important}'});
   await page.locator('#integrationsTabButton').click();await page.waitForSelector('#integrationsPanel.is-active .fdchat');
-  assert.equal(await page.locator('#integrationsTabButton').textContent(),'Chat IA');
+  assert.equal(await page.locator('#integrationsTabButton').textContent(),'Inicial');
   assert.equal(await page.locator('.workspace-panel.is-active').count(),1);
   assert.equal(await page.locator('#integrationsPanel > section').count(),1);
-  assert.equal(await page.locator('#alterdataTabButton,#chainTabButton,#alterdataPanel,#chainPanel,.integration-card,.integrations-shell').count(),0);
+  assert.equal(await page.locator('#alterdataTabButton,#chainTabButton,#alterdataPanel,#chainPanel,.integration-card,.integrations-shell,#smartRecorderTabButton,#smartRecorderPanel').count(),0);
+  assert.equal(await page.getByRole('button',{name:'Demonstrar no desktop',exact:true}).count(),1);
   assert.equal(await page.locator('#flowChatInput').isVisible(),true);
   await page.locator('#launcherTabButton').click();assert.equal(await page.locator('#integrationsPanel').isVisible(),false);
   await page.locator('#commandTabButton').click();assert.equal(await page.locator('#commandsPanel').isVisible(),true);
