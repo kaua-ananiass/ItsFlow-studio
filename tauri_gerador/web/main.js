@@ -6,6 +6,7 @@ import { startRemoteVideoStats } from "./remote-video-stats.js";
 import {renderTableEditor,initTableBlocks} from './table-blocks.js';
 import {initChatGPT} from './chatgpt.js';
 import {initGoogleWorkspace} from './google-workspace.js';
+import {revealWorkspace} from './workspace-transition.js';
 
 let chatWorkspace = null;
 let chatMapWorkspace = null;
@@ -104,13 +105,6 @@ const state = {
   workbook: null,
   workbookPreview: null,
   workbookExternalEditOpenedAt: 0,
-  smartRecorder: {
-    running: false,
-    events: [],
-    previews: {},
-    pendingClickId: null,
-    pollTimer: null,
-  },
   uiaMapper: {
     map: null,
     query: "",
@@ -165,7 +159,7 @@ const state = {
     suppressFlipAnimation: false,
     flipSettleTimer: null,
   },
-  activeTab: "launcher",
+  activeTab: "integrations",
   remoteControl: {
     physicalAgentId: "",
     physicalConnecting: false,
@@ -558,7 +552,6 @@ const agentsTabButton = document.getElementById("agentsTabButton");
 const integrationsTabButton = document.getElementById("integrationsTabButton");
 const integrationsPanel = document.getElementById("integrationsPanel");
 const agentScreenTabButton = document.getElementById("agentScreenTabButton");
-const smartRecorderTabButton = document.getElementById("smartRecorderTabButton");
 const sessionChip = document.getElementById("sessionChip");
 const tutorialReplayButton = document.getElementById("tutorialReplayButton");
 const studioTutorialOverlay = document.getElementById("studioTutorialOverlay");
@@ -622,7 +615,6 @@ const agentAutomationConnectionStatus = document.getElementById("agentAutomation
 const agentAutomationLocalList = document.getElementById("agentAutomationLocalList");
 const agentAutomationTransferStatus = document.getElementById("agentAutomationTransferStatus");
 const agentAutomationSendButton = document.getElementById("agentAutomationSendButton");
-const smartRecorderPanel = document.getElementById("smartRecorderPanel");
 const studioControlHint = document.getElementById("studioControlHint");
 const studioControlStatus = document.getElementById("studioControlStatus");
 const studioControlAddressInput = document.getElementById("studioControlAddressInput");
@@ -753,12 +745,6 @@ const automationZipFileInput = document.getElementById("automationZipFileInput")
 const workbookSheetSelect = document.getElementById("workbookSheetSelect");
 const workbookSearchInput = document.getElementById("workbookSearchInput");
 const workbookRowsInfo = document.getElementById("workbookRowsInfo");
-const smartRecorderStartButton = document.getElementById("smartRecorderStartButton");
-const smartRecorderStopButton = document.getElementById("smartRecorderStopButton");
-const smartRecorderSendButton = document.getElementById("smartRecorderSendButton");
-const smartRecorderStatus = document.getElementById("smartRecorderStatus");
-const smartRecorderCount = document.getElementById("smartRecorderCount");
-const smartRecorderTrack = document.getElementById("smartRecorderTrack");
 const workbookTableWrap = document.getElementById("workbookTableWrap");
 const workbookSelectedValueBlock = document.getElementById("workbookSelectedValueBlock");
 const selectedWorkbookStatus = document.getElementById("selectedWorkbookStatus");
@@ -1044,9 +1030,6 @@ function renderActiveWorkspaceContent() {
     }
   }
 
-  if (state.activeTab === "smart-recorder") {
-    renderSmartRecorder();
-  }
 
   if (isCommandMapVisible()) {
     scheduleCommandMapAutoFit();
@@ -1149,7 +1132,6 @@ function setWorkspaceTab(tabName) {
   const agentsActive = tabName === "agents";
   const integrationsActive = tabName === "integrations";
   const agentScreenActive = tabName === "agent-screen";
-  const smartRecorderActive = tabName === "smart-recorder";
   launcherTabButton.classList.toggle("is-active", launcherActive);
   editorTabButton.classList.toggle("is-active", editorActive);
   assistTabButton.classList.toggle("is-active", assistActive);
@@ -1159,7 +1141,6 @@ function setWorkspaceTab(tabName) {
   agentsTabButton?.classList.toggle("is-active", agentsActive);
   integrationsTabButton?.classList.toggle("is-active", integrationsActive);
   agentScreenTabButton?.classList.toggle("is-active", agentScreenActive);
-  smartRecorderTabButton?.classList.toggle("is-active", smartRecorderActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
   editorPanel.classList.toggle("is-active", editorActive);
   assistPanel.classList.toggle("is-active", assistActive);
@@ -1171,14 +1152,12 @@ function setWorkspaceTab(tabName) {
   integrationsPanel?.classList.toggle("is-active", integrationsActive);
   if(integrationsActive)chatWorkspace?.refresh();
   agentScreenPanel?.classList.toggle("is-active", agentScreenActive);
-  smartRecorderPanel?.classList.toggle("is-active", smartRecorderActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
   builderShell?.classList.toggle("is-commands-active", commandsActive);
   builderShell?.classList.toggle("is-workbook-active", workbookActive);
   builderShell?.classList.toggle("is-assist-active", assistActive);
   builderShell?.classList.toggle("is-remote-control-active", remoteControlActive);
   builderShell?.classList.toggle("is-agent-screen-active", agentScreenActive);
-  builderShell?.classList.toggle("is-smart-recorder-active", smartRecorderActive);
   applyCommandMapChromeMode();
   if (agentScreenActive) {
     renderStudioControlScreen();
@@ -1197,6 +1176,12 @@ function setWorkspaceTab(tabName) {
   }
   scheduleActiveWorkspaceRender();
   releaseInactiveWorkspaceDom(previousTab);
+  if (previousTab !== tabName) {
+    const panels = {launcher: launcherPanel, editor: editorPanel, assist: assistPanel,
+      commands: commandsPanel, workbook: workbookPanel, agents: agentsPanel,
+      integrations: integrationsPanel, 'agent-screen': agentScreenPanel};
+    revealWorkspace(panels[tabName], tabName);
+  }
 }
 
 const STUDIO_TUTORIAL_STORAGE_KEY = "flowdetect_studio_tutorial_seen_v1";
@@ -2700,7 +2685,7 @@ function renderLoginTitle() {
   if (!loginTitleText) {
     return;
   }
-  loginTitleText.innerHTML = '<span class="welcome-title-flow">Flow</span><span class="welcome-title-detect">Detect</span>';
+  loginTitleText.innerHTML = '<span class="welcome-title-flow">its</span><span class="welcome-title-detect">flow</span><span class="welcome-studio">Studio</span>';
 }
 
 function updateLoginModeUI() {
@@ -2716,7 +2701,7 @@ function updateActivationSummary() {
     return;
   }
   loginActivationSummary.textContent = state.login.authenticated
-    ? "FlowDetect pronto para uso nesta maquina."
+    ? "itsflow pronto para uso nesta maquina."
     : "Automacao visual para criar, testar e executar fluxos desktop.";
 }
 
@@ -2738,8 +2723,10 @@ function updateLoginResolutionPreview(resolution = null) {
 
 function applyLoginStateUI() {
   const authenticated = Boolean(state.login.authenticated);
+  const wasAuthenticated = document.body.classList.contains("is-authenticated");
   document.body.classList.toggle("is-authenticated", authenticated);
   document.body.classList.toggle("is-auth-locked", !authenticated);
+  if (authenticated && !wasAuthenticated) window.dispatchEvent(new Event("itsflow-interface-ready"));
   if (loginOverlay) {
     loginOverlay.setAttribute("aria-hidden", authenticated ? "true" : "false");
     loginOverlay.hidden = authenticated;
@@ -2757,7 +2744,7 @@ function applyLoginStateUI() {
   if (sessionChip) {
     sessionChip.textContent = authenticated
       ? `${userName || DEV_ADMIN_CONFIG.displayName} | ${resolutionLabel}`
-      : "FlowDetect | aguardando entrada";
+      : "itsflow | aguardando entrada";
   }
 
   if (assistWindowText) {
@@ -2836,13 +2823,13 @@ async function loadPersistedLoginSession(options = {}) {
     if (preserveAuthenticated && state.login.authenticated) {
       return;
     }
-    console.warn("Nao foi possivel carregar a sessao local do FlowDetect.", error);
+    console.warn("Nao foi possivel carregar a sessao local do itsflow.", error);
   }
 }
 
 async function submitDevAdminLogin() {
   if (!hasDevAdminConfig()) {
-    setLoginError("A entrada local do FlowDetect nao esta habilitada.");
+    setLoginError("A entrada local do itsflow nao esta habilitada.");
     return;
   }
 
@@ -2907,9 +2894,9 @@ async function submitDevAdminLogin() {
     state.login.expiresAt = "";
     state.login.step = "admin";
     applyLoginStateUI();
-    setMessage(`FlowDetect pronto. Resolucao ${resolution.screenWidth} x ${resolution.screenHeight} salva para esta maquina.`, "success");
+    setMessage(`itsflow pronto. Resolucao ${resolution.screenWidth} x ${resolution.screenHeight} salva para esta maquina.`, "success");
   } catch (error) {
-    setLoginError(String(error || "Falha ao abrir o FlowDetect."));
+    setLoginError(String(error || "Falha ao abrir o itsflow."));
   } finally {
     loginSubmitInFlight = false;
     if (devAdminLoginButton) {
@@ -2996,7 +2983,7 @@ async function runImageRecognitionTest(values, options = {}) {
     }
     setMessage(
       options.inheritWindowFallback === false
-        ? "Ocultando o FlowDetect por instantes para procurar o bloco na tela externa."
+        ? "Ocultando o itsflow por instantes para procurar o bloco na tela externa."
         : "Testando somente o bloco de reconhecimento...",
       "info"
     );
@@ -3190,7 +3177,7 @@ function applyAssistPositionHint(text, { render = true } = {}) {
   return true;
 }
 
-const FLOWDETECT_WINDOW_PATTERN = /flowdetect|gerador visual de automacoes/i;
+const FLOWDETECT_WINDOW_PATTERN = /itsflow|flowdetect|gerador visual de automacoes/i;
 
 function isFlowDetectWindowCandidate(item) {
   return FLOWDETECT_WINDOW_PATTERN.test(String(item?.title || ""));
@@ -3440,7 +3427,7 @@ function renderAssistWindowPicker() {
   assistWindowPickerList.innerHTML = items.map((item) => {
     const blocked = Boolean(item.isFlowDetect);
     const active = state.assistTarget.enabled && Number(state.assistTarget.hwnd) === Number(item.hwnd);
-    const tagLabel = blocked ? "FlowDetect" : active ? "Atual" : "Selecionar";
+    const tagLabel = blocked ? "itsflow" : active ? "Atual" : "Selecionar";
     const tagClass = blocked ? "assist-window-picker-tag is-blocked" : "assist-window-picker-tag";
     return `
       <button
@@ -3502,7 +3489,7 @@ async function applyAssistTargetWindow(item) {
     throw new Error("Selecione uma janela valida.");
   }
   if (target.isFlowDetect) {
-    throw new Error("A propria janela do FlowDetect nao pode ser usada como alvo da automacao.");
+    throw new Error("A propria janela do itsflow nao pode ser usada como alvo da automacao.");
   }
 
   const result = await invoke("show_target_window_overlay", {
@@ -7935,7 +7922,7 @@ function chromeWebFriendlyError(resultOrError) {
     ? resultOrError
     : String(resultOrError?.message || resultOrError || "");
   if (rawMessage.includes("9222") || rawMessage.toLowerCase().includes("conectar na aba atual do chrome")) {
-    return "Nao consegui acessar essa aba do Chrome. Feche todas as janelas do Chrome e abra o site pelo bloco Abrir URL do FlowDetect. Assim ele abre no perfil normal com a porta Web ativa.";
+    return "Nao consegui acessar essa aba do Chrome. Feche todas as janelas do Chrome e abra o site pelo bloco Abrir URL do itsflow. Assim ele abre no perfil normal com a porta Web ativa.";
   }
   return rawMessage || "Nao foi possivel acessar o Chrome.";
 }
@@ -8253,7 +8240,7 @@ function renderChromePreviewHtml(analysis) {
     <div class="chrome-preview-copy">
       <p class="panel-kicker">Elemento escolhido</p>
       <h3>${escapeHtml(friendlyName)}</h3>
-      <p class="muted-copy">O FlowDetect vai procurar: <strong>${escapeHtml(visibleText)}</strong></p>
+      <p class="muted-copy">O itsflow vai procurar: <strong>${escapeHtml(visibleText)}</strong></p>
     </div>
   `;
 }
@@ -8706,7 +8693,7 @@ async function handleChromeOpenForCaptureButton(button, event) {
   button.textContent = "Abrindo Chrome...";
   button.disabled = true;
   setBusy("Abrindo Chrome");
-  setMessage("Abrindo uma janela do Chrome conectada ao FlowDetect para capturar elementos.", "info");
+  setMessage("Abrindo uma janela do Chrome conectada ao itsflow para capturar elementos.", "info");
   try {
     const result = await invoke("chrome_web_open_site", { url });
     if (!result?.ok) {
@@ -13154,401 +13141,6 @@ function selectedPreviewWorkbookMeta() {
   return workbookById(activeId) || workbooks[0] || null;
 }
 
-function smartRecorderUsableEvents() {
-  return (state.smartRecorder.events || []).filter((event) => event?.type && event.type !== "status");
-}
-
-function smartRecorderTypeLabel(type) {
-  if (type === "clicar_imagem") return "Reconhecimento";
-  if (type === "texto_livre") return "Texto";
-  if (type === "tecla") return "Tecla";
-  return "Evento";
-}
-
-function smartRecorderEventTitle(event) {
-  if (event.type === "clicar_imagem") return "Clique visual";
-  if (event.type === "texto_livre") return "Texto digitado";
-  if (event.type === "tecla") return `Tecla ${(event.keys || "").toUpperCase()}`;
-  return event.title || "Evento capturado";
-}
-
-function smartRecorderEventSubtitle(event) {
-  if (event.type === "clicar_imagem") {
-    return event.click_action === "identificar" || event.clicks === 0 ? "So identificar" : `${event.clicks || 1} clique(s)`;
-  }
-  if (event.type === "texto_livre") return event.text || "-";
-  if (event.type === "tecla") return `${event.keys || "-"} x${event.repeat || 1}`;
-  return event.title || "-";
-}
-
-function smartRecorderTargetSequence(event) {
-  return event.target_sequence || event.targetSequence || "principal";
-}
-
-function smartRecorderDestinationLabel(event) {
-  return `Criar em: ${sequenceLabel(smartRecorderTargetSequence(event))}`;
-}
-
-function formatSmartRecorderDelay(value) {
-  const delay = Math.max(0, Number(value || 0));
-  return `${delay.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}s`;
-}
-
-function smartRecorderClickControls(event) {
-  const width = Number(event.crop?.width || 180);
-  const height = Number(event.crop?.height || 110);
-  const clicks = Number(event.clicks || 1);
-  const clickAction = event.click_action === "identificar" || event.clicks === 0 ? "identificar" : "clicar";
-  const confirmed = Boolean(event.confirmed);
-  return `
-    <div class="smart-recorder-preview" data-smart-preview="${escapeHtml(event.image_id || "")}">
-      ${state.smartRecorder.previews[event.image_id]
-        ? `<img src="${escapeHtml(state.smartRecorder.previews[event.image_id])}" alt="Preview da area capturada" />`
-        : `<span>Carregando preview...</span>`}
-    </div>
-    <div class="smart-recorder-click-editor ${confirmed ? "is-confirmed" : "is-pending"}">
-      <label>
-        <span>Largura</span>
-        <input data-smart-recorder-field="width" type="number" min="40" step="10" value="${escapeHtml(String(width))}" />
-      </label>
-      <label>
-        <span>Altura</span>
-        <input data-smart-recorder-field="height" type="number" min="40" step="10" value="${escapeHtml(String(height))}" />
-      </label>
-      <label>
-        <span>Acao</span>
-        <select data-smart-recorder-field="clicks">
-          <option value="1" ${clickAction !== "identificar" && clicks !== 2 ? "selected" : ""}>1 clique</option>
-          <option value="2" ${clickAction !== "identificar" && clicks === 2 ? "selected" : ""}>2 cliques</option>
-          <option value="identify" ${clickAction === "identificar" ? "selected" : ""}>So identificar</option>
-        </select>
-      </label>
-      <button class="tree-save-button" type="button" data-smart-recorder-action="confirm-click">
-        ${confirmed ? "Atualizar area" : "Confirmar area"}
-      </button>
-    </div>
-  `;
-}
-
-async function hydrateSmartRecorderPreviews() {
-  const imageIds = smartRecorderUsableEvents()
-    .filter((event) => event.type === "clicar_imagem" && event.image_id && !state.smartRecorder.previews[event.image_id])
-    .map((event) => event.image_id);
-  if (!imageIds.length) return;
-  await Promise.allSettled(imageIds.map(async (imageId) => {
-    const preview = await invoke("get_recognition_image_preview", { imageId });
-    if (preview?.src) {
-      state.smartRecorder.previews[imageId] = preview.src;
-    }
-  }));
-  renderSmartRecorder();
-}
-
-function renderSmartRecorder() {
-  if (!smartRecorderTrack) return;
-  const events = smartRecorderUsableEvents();
-  if (smartRecorderStatus) smartRecorderStatus.textContent = state.smartRecorder.running ? "Gravando" : "Pronto";
-  if (smartRecorderCount) smartRecorderCount.textContent = String(events.length);
-  if (smartRecorderStartButton) smartRecorderStartButton.disabled = state.smartRecorder.running;
-  if (smartRecorderStopButton) smartRecorderStopButton.disabled = !state.smartRecorder.running;
-  if (smartRecorderSendButton) smartRecorderSendButton.disabled = state.smartRecorder.running || !events.length;
-
-  if (!events.length) {
-    smartRecorderTrack.innerHTML = `<div class="empty-state">Nenhum bloco gravado ainda. Clique em Iniciar gravacao para comecar.</div>`;
-    return;
-  }
-
-  smartRecorderTrack.innerHTML = events.map((event, index) => `
-    ${index > 0 ? `
-      <span class="smart-recorder-delay-connector">
-        <i></i>
-        <input
-          type="number"
-          min="0"
-          step="0.1"
-          value="${escapeHtml(String(Math.max(0, Number(event.delay || 0.3)).toFixed(1)))}"
-          title="Tempo antes deste bloco"
-          data-smart-recorder-delay-id="${escapeHtml(String(event.id))}"
-        />
-        <i></i>
-      </span>
-    ` : ""}
-    <article class="smart-recorder-card smart-recorder-card-${escapeHtml(event.type)}" data-smart-recorder-id="${escapeHtml(String(event.id))}">
-      <div class="smart-recorder-card-top">
-        <div class="smart-recorder-card-main">
-          <span class="flow-index">${String(index + 1).padStart(2, "0")}</span>
-          <div>
-            <h3>${escapeHtml(smartRecorderEventTitle(event))}</h3>
-            <p>${escapeHtml(smartRecorderEventSubtitle(event))}</p>
-          </div>
-        </div>
-        <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(smartRecorderTypeLabel(event.type))}</span>
-      </div>
-      <div class="smart-recorder-meta-row">
-        <span class="smart-recorder-destination-chip">${escapeHtml(smartRecorderDestinationLabel(event))}</span>
-      </div>
-      ${event.type === "clicar_imagem" ? `
-        <div class="smart-recorder-crop">Area: ${escapeHtml(String(event.crop?.width || "-"))} x ${escapeHtml(String(event.crop?.height || "-"))}</div>
-        ${smartRecorderClickControls(event)}
-        <button class="tree-open-button" type="button" data-smart-recorder-action="adjust-image">Selecionar area manual</button>
-      ` : ""}
-      <button class="tree-delete-button smart-recorder-delete-button" type="button" data-smart-recorder-action="delete-event">Excluir bloco</button>
-    </article>
-  `).join("");
-  hydrateSmartRecorderPreviews().catch(() => {});
-}
-
-async function refreshSmartRecorderStatus() {
-  const wasRunning = state.smartRecorder.running;
-  const status = await invoke("get_smart_recorder_status");
-  state.smartRecorder.running = Boolean(status.running);
-  state.smartRecorder.events = Array.isArray(status.events) ? status.events : [];
-  renderSmartRecorder();
-  const pendingClick = smartRecorderUsableEvents().find((event) => event.type === "clicar_imagem" && !event.confirmed);
-  if (state.smartRecorder.running && pendingClick && state.smartRecorder.pendingClickId !== pendingClick.id) {
-    state.smartRecorder.pendingClickId = pendingClick.id;
-    await stopSmartRecorder();
-    setWorkspaceTab("smart-recorder");
-    setMessage("Clique capturado. Confirme a area e escolha 1 ou 2 cliques antes de continuar.", "success");
-    return;
-  }
-  if (!state.smartRecorder.running) {
-    stopSmartRecorderPolling();
-    if (wasRunning) {
-      setBusy("Pronto");
-      setMessage("Gravacao finalizada. Revise os blocos antes de enviar para o mapa.", "success");
-    }
-  }
-}
-
-function startSmartRecorderPolling() {
-  window.clearInterval(state.smartRecorder.pollTimer);
-  state.smartRecorder.pollTimer = window.setInterval(() => {
-    refreshSmartRecorderStatus().catch((error) => {
-      stopSmartRecorderPolling();
-      setMessage(String(error), "error");
-    });
-  }, 700);
-}
-
-function stopSmartRecorderPolling() {
-  window.clearInterval(state.smartRecorder.pollTimer);
-  state.smartRecorder.pollTimer = null;
-}
-
-async function startSmartRecorder() {
-  try {
-    setBusy("Gravando");
-    const result = await invoke("start_smart_recorder");
-    state.smartRecorder.running = Boolean(result.running);
-    state.smartRecorder.events = Array.isArray(result.events) ? result.events : [];
-    state.smartRecorder.pendingClickId = null;
-    renderSmartRecorder();
-    startSmartRecorderPolling();
-    setMessage(result.message || "Gravador iniciado. Use ESC para finalizar.", "success");
-  } catch (error) {
-    if (typeof options.onError === "function") {
-      options.onError(error);
-    }
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-}
-
-async function stopSmartRecorder() {
-  try {
-    setBusy("Parando gravador");
-    const result = await invoke("stop_smart_recorder");
-    state.smartRecorder.running = Boolean(result.running);
-    state.smartRecorder.events = Array.isArray(result.events) ? result.events : [];
-    stopSmartRecorderPolling();
-    renderSmartRecorder();
-    setBusy("Pronto");
-    setMessage("Gravacao finalizada. Revise os blocos antes de enviar para o mapa.", "success");
-  } catch (error) {
-    if (typeof options.onError === "function") {
-      options.onError(error);
-    }
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-}
-
-async function adjustSmartRecorderClickImage(eventId) {
-  const event = state.smartRecorder.events.find((item) => String(item.id) === String(eventId));
-  if (!event || event.type !== "clicar_imagem") return;
-  try {
-    setBusy("Ajustando area");
-    const result = await invoke("capture_image_asset", { baseNameHint: `gravador_click_${event.id}` });
-    event.image_id = result.image_id || event.image_id;
-    event.crop = { ...(event.crop || {}), manual: true };
-    renderSmartRecorder();
-    setBusy("Pronto");
-    setMessage("Area do clique atualizada para esse bloco gravado.", "success");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-}
-
-async function confirmSmartRecorderClickArea(card) {
-  const eventId = Number(card?.dataset.smartRecorderId || 0);
-  const event = state.smartRecorder.events.find((item) => Number(item.id) === eventId);
-  if (!event || event.type !== "clicar_imagem") return;
-  const get = (field) => card.querySelector(`[data-smart-recorder-field="${field}"]`);
-  const width = Math.max(40, Math.trunc(parseNumber(get("width")?.value, event.crop?.width || 180)));
-  const height = Math.max(40, Math.trunc(parseNumber(get("height")?.value, event.crop?.height || 110)));
-  const clickValue = get("clicks")?.value || "1";
-  const clickAction = clickValue === "identify" ? "identificar" : "clicar";
-  const clicks = clickAction === "identificar" ? 0 : Math.max(1, Math.min(2, Math.trunc(parseNumber(clickValue, event.clicks || 1))));
-  try {
-    setBusy("Confirmando area");
-    const result = await invoke("update_smart_recorder_click_area", {
-      eventId,
-      width,
-      height,
-      clicks,
-      clickAction,
-    });
-    state.smartRecorder.events = Array.isArray(result.events) ? result.events : state.smartRecorder.events;
-    const updated = result.event;
-    if (updated?.image_id) {
-      delete state.smartRecorder.previews[updated.image_id];
-    }
-    renderSmartRecorder();
-    setBusy("Pronto");
-    setMessage("Area e quantidade de cliques confirmadas.", "success");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-}
-
-async function deleteSmartRecorderEvent(eventId) {
-  const event = state.smartRecorder.events.find((item) => String(item.id) === String(eventId));
-  if (!event) return;
-  try {
-    setBusy("Excluindo bloco");
-    const result = await invoke("delete_smart_recorder_event", { eventId: Number(eventId) });
-    state.smartRecorder.events = Array.isArray(result.events)
-      ? result.events
-      : state.smartRecorder.events.filter((item) => String(item.id) !== String(eventId));
-    if (event.image_id) {
-      delete state.smartRecorder.previews[event.image_id];
-    }
-    renderSmartRecorder();
-    setBusy(state.smartRecorder.running ? "Gravando" : "Pronto");
-    setMessage("Bloco removido do Gravador inteligente.", "success");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-}
-
-async function updateSmartRecorderEventDelay(input) {
-  const eventId = Number(input?.dataset.smartRecorderDelayId || 0);
-  if (!eventId) return;
-  const delay = Math.max(0, Number(parseNumber(input.value, 0)));
-  const current = state.smartRecorder.events.find((item) => Number(item.id) === eventId);
-  if (current && Math.abs(Number(current.delay || 0) - delay) < 0.001) return;
-  try {
-    setBusy("Salvando tempo");
-    const result = await invoke("update_smart_recorder_event_delay", { eventId, delay });
-    state.smartRecorder.events = Array.isArray(result.events) ? result.events : state.smartRecorder.events;
-    renderSmartRecorder();
-    setBusy(state.smartRecorder.running ? "Gravando" : "Pronto");
-    setMessage("Tempo do bloco atualizado.", "success");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-}
-
-async function sendSmartRecorderEventsToMap() {
-  const events = smartRecorderUsableEvents();
-  if (!events.length) {
-    setMessage("Nenhum bloco gravado para enviar ao mapa.", "error");
-    return;
-  }
-  const pendingClicks = events.filter((event) => event.type === "clicar_imagem" && !event.confirmed);
-  if (pendingClicks.length) {
-    setMessage("Confirme a area dos cliques visuais antes de enviar para o mapa.", "error");
-    return;
-  }
-  try {
-    setBusy("Enviando blocos");
-    let roadmap = null;
-    const sequencia = currentSequenceName();
-    for (const event of events) {
-      const eventSequence = smartRecorderTargetSequence(event);
-      if (event.type === "texto_livre" && String(event.text || "").trim()) {
-        roadmap = await invoke("add_text_block", {
-          text: String(event.text || ""),
-          delay: Number(event.delay || 0.3),
-          sequencia: eventSequence,
-          aoSucesso: "continuar",
-          blocoSucesso: null,
-          sequenciaSucesso: null,
-          atrasoSequenciaSucesso: 0,
-          editavelExecucao: false,
-          rotuloExecucao: null,
-        });
-      } else if (event.type === "tecla" && String(event.keys || "").trim()) {
-        roadmap = await invoke("add_key_block", {
-          keys: String(event.keys || ""),
-          repeat: Number(event.repeat || 1),
-          delay: Number(event.delay || 0.3),
-          sequencia: eventSequence,
-          aoSucesso: "continuar",
-          blocoSucesso: null,
-          sequenciaSucesso: null,
-          atrasoSequenciaSucesso: 0,
-        });
-      } else if (event.type === "clicar_imagem" && String(event.image_id || "").trim()) {
-        roadmap = await invoke("add_image_click_block", {
-          imagem: String(event.image_id || ""),
-          timeout: 10,
-          confianca: Number(event.confidence || 0.82),
-          perfilBusca: "balanced",
-          clicar: !(event.click_action === "identificar" || Number(event.clicks || 1) <= 0),
-          clicks: event.click_action === "identificar" ? 0 : Number(event.clicks || 1),
-          offsetX: 0,
-          offsetY: 0,
-          janelaAlvo: null,
-          textoOcrEsperado: null,
-          ...relativeOcrInvokeArgs({}),
-          aoNaoEncontrar: "parar",
-          sequenciaNaoEncontrar: null,
-          blocoNaoEncontrar: null,
-          atrasoSequenciaNaoEncontrar: 0,
-          quantidadeTentativas: 1,
-          intervaloTentativas: 1,
-          delay: Number(event.delay || 0.3),
-          sequencia: eventSequence,
-          aoSucesso: "continuar",
-          blocoSucesso: null,
-          sequenciaSucesso: null,
-          atrasoSequenciaSucesso: 0,
-        });
-      }
-    }
-    if (roadmap) {
-      applyRoadmap(roadmap, { preserveCommandMapSequence: sequencia });
-      markCommandMapSaveDirty();
-    }
-    await invoke("clear_smart_recorder_events");
-    state.smartRecorder.events = [];
-    state.smartRecorder.previews = {};
-    renderSmartRecorder();
-    setBusy("Pronto");
-    setMessage(`${events.length} bloco(s) enviados para o mapa e removidos do gravador.`, "success");
-    setWorkspaceTab("commands");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-}
-
 function workbookSheetsFor(workbookId) {
   return workbookById(workbookId)?.sheets ?? [];
 }
@@ -14173,7 +13765,7 @@ function renderLauncherLibrary() {
           <div class="launcher-empty-library-copy">
             <p class="panel-kicker">Biblioteca vazia</p>
             <h3>Preencha os dados da sua primeira automacao</h3>
-            <p>O FlowDetect foi aberto limpo para voce comecar do zero. O formulario ja esta no card acima.</p>
+            <p>O itsflow foi aberto limpo para voce comecar do zero. O formulario ja esta no card acima.</p>
           </div>
           <div class="launcher-empty-library-tip">Depois de criar, ela ja abre pronta para editar no mapa dos comandos.</div>
         </section>
@@ -16440,7 +16032,7 @@ async function ensureHypervVmStoppedForClone(vmName = "") {
 }
 
 function normalizeAgent(agent = {}) {
-  const name = String(agent.name || "FlowDetect Agent").trim() || "FlowDetect Agent";
+  const name = String(agent.name || "itsflow Agent").trim() || "itsflow Agent";
   const address = normalizeAgentAddress(agent.address || "");
   const status = String(agent.status || "").trim();
   return {
@@ -16491,7 +16083,7 @@ function physicalAgentFormMarkup() {
     </details>
     <p class="agent-pairing-inline-error" data-agent-pairing-error role="alert" hidden></p>
     <label><span>Perfil</span><select id="agentProfileSelect">${Object.entries({fiscal:"Fiscal", dp:"Departamento Pessoal", contabil:"Contábil", ti:"TI"}).map(([value, label]) => `<option value="${value}" ${draft.profile === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
-    <p>Abra o FlowDetect Agent no outro PC e informe o código exibido nele. Os computadores precisam estar na mesma rede. Para ver o Agent use Ctrl + Shift + F12.</p>
+    <p>Abra o itsflow Agent no outro PC e informe o código exibido nele. Os computadores precisam estar na mesma rede. Para ver o Agent use Ctrl + Shift + F12.</p>
     <details class="agent-pairing-advanced"><summary>Não encontrou o Agent? Configuração avançada</summary>
       <label><span>IP local (opcional)</span><input id="agentAddressHintInput" type="text" placeholder="192.168.1.150" spellcheck="false" /></label>
       <small>Use somente se a descoberta automática estiver bloqueada. O código continua obrigatório para autorizar a conexão.</small>
@@ -16544,7 +16136,7 @@ async function connectPhysicalAgent(agent) {
       compatibility = await invoke("remote_agent_ping", { address: connectedAgent.address });
     }
     if (Number(compatibility?.pairing_protocol || 0) !== 1) {
-      throw new Error("Agent incompatível: instale o FlowDetect Agent com suporte ao pareamento por código.");
+      throw new Error("Agent incompatível: instale o itsflow Agent com suporte ao pareamento por código.");
     }
     if (!await connectAgentFromCard(connectedAgent)) throw new Error(state.agents.lastConnectionError || "Agent indisponível.");
     updateAgentRuntime(agent.id, { status: "online", connectionStage: "", lastSeenAt: Date.now() });
@@ -16746,7 +16338,7 @@ function agentCreateLauncherMarkup() {
 }
 
 function agentAddLauncherMarkup() {
-  if (state.agents.activeView === "physical") return `<button class="agent-launcher-add" type="button" data-agent-action="new"><span class="agent-launcher-add-icon">+</span><strong>Adicionar computador</strong><small>Conecte pelo IP do FlowDetect Agent, sem VM.</small></button>`;
+  if (state.agents.activeView === "physical") return `<button class="agent-launcher-add" type="button" data-agent-action="new"><span class="agent-launcher-add-icon">+</span><strong>Adicionar computador</strong><small>Conecte pelo IP do itsflow Agent, sem VM.</small></button>`;
   return `
     <button class="agent-launcher-add" type="button" data-agent-action="new">
       <span class="agent-launcher-add-icon">+</span>
@@ -16838,7 +16430,7 @@ function updateAgentFromConnection(address = "", ping = {}) {
     return {
       ...agent,
       address: normalizedAddress,
-      name: agent.name || ping?.agent || "FlowDetect Agent",
+      name: agent.name || ping?.agent || "itsflow Agent",
       status: "online",
       lastSeenAt: Date.now(),
     };
@@ -16981,7 +16573,7 @@ async function pickAgentStoragePath() {
   const input = document.getElementById("agentStoragePathInput");
   try {
     const selected = await openNativeFolderDialog({
-      title: "Escolha onde salvar as VMs do FlowDetect",
+      title: "Escolha onde salvar as VMs do itsflow",
       defaultPath: input?.value || undefined,
     });
     const path = Array.isArray(selected) ? selected[0] : selected;
@@ -17002,7 +16594,7 @@ async function saveAgentFromForm() {
   }
   setBusy(state.agents.activeView === "physical" ? "Pareando computador" : "Criando maquina");
   const readValue = (id) => String(document.getElementById(id)?.value || "").trim();
-  const name = readValue("agentNameInput") || "FlowDetect Agent";
+  const name = readValue("agentNameInput") || "itsflow Agent";
   const profile = readValue("agentProfileSelect") || "fiscal";
   const physical = state.agents.activeView === "physical";
   let address = physical
@@ -17015,7 +16607,7 @@ async function saveAgentFromForm() {
   const addressHint = physical ? readValue("agentAddressHintInput") : "";
   if (physical && !address && !pairingCode && !accessPassword) {
     setBusy("Erro");
-    const error = "Informe o código de pareamento de 12 caracteres exibido no FlowDetect Agent.";
+    const error = "Informe o código de pareamento de 12 caracteres exibido no itsflow Agent.";
     setAgentCreateProgress({active:false,percent:0,error,label:"Código obrigatório"});
     setMessage(error,"error");
     return;
@@ -17059,7 +16651,7 @@ async function saveAgentFromForm() {
     const paired = accessPassword
       ? await invoke('remote_agent_pair_by_password',{address:passwordAddress,password:accessPassword})
       : await invoke("remote_agent_pair_by_code", { code: pairingCode, address: addressHint || null });
-    if (Number(paired?.pairing_protocol) !== 1) throw new Error("Agent incompatível. Atualize o FlowDetect Agent.");
+    if (Number(paired?.pairing_protocol) !== 1) throw new Error("Agent incompatível. Atualize o itsflow Agent.");
     address = validatePhysicalAgentAddress(paired.address);
     deviceId = String(paired.agent_id || "");
   }
@@ -17215,7 +16807,7 @@ function saveAgentCardEdit(id) {
     return;
   }
   const readField = (field) => String(card.querySelector(`[data-agent-edit-field="${field}"]`)?.value || "").trim();
-  const name = readField("name") || "FlowDetect Agent";
+  const name = readField("name") || "itsflow Agent";
   const address = normalizeAgentAddress(readField("address"));
   const vmName = readField("vmName");
   const profile = readField("profile") || "fiscal";
@@ -17345,7 +16937,7 @@ async function startAgentVm(agent) {
       startupProgress: 24,
       status: "starting",
     });
-    setMessage(`VM iniciada. Aguardando o FlowDetect Agent: ${vmName}`, "success");
+    setMessage(`VM iniciada. Aguardando o itsflow Agent: ${vmName}`, "success");
     return updated || preparedAgent;
   } catch (error) {
     setBusy("Erro");
@@ -17370,7 +16962,7 @@ async function waitAndConnectAgent(agent, attempts = 18) {
         ? "Windows iniciando"
         : index < 12
           ? "Aguardando rede da maquina"
-          : "Aguardando FlowDetect Agent responder",
+          : "Aguardando itsflow Agent responder",
       startupProgress: progress,
       status: "starting",
     });
@@ -17826,7 +17418,7 @@ function renderAgents() {
               <span class="agent-card-chip">${escapeHtml(profileLabel)}</span>
             </div>
             <h3>${escapeHtml(agent.name)}</h3>
-            <p class="agent-card-description">${escapeHtml(agent.connectionStage || (hasAddress ? "Tela e automacoes remotas liberadas." : "O FlowDetect vai preparar a conexao automaticamente."))}</p>
+            <p class="agent-card-description">${escapeHtml(agent.connectionStage || (hasAddress ? "Tela e automacoes remotas liberadas." : "O itsflow vai preparar a conexao automaticamente."))}</p>
             ${starting ? `
               <div class="agent-startup-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${startupProgress}">
                 <div class="agent-startup-progress-head"><span>${progressLabel}</span><strong>${startupProgress}%</strong></div>
@@ -18808,7 +18400,7 @@ async function connectStudioControl(addressOverride = "") {
   state.remoteControl.address = address;
   const ping = await invoke("remote_agent_ping", { address });
   state.remoteControl.connected = true;
-  state.remoteControl.agentLabel = `${ping?.agent || "FlowDetect Agent"} | ${ping?.address || address}`;
+  state.remoteControl.agentLabel = `${ping?.agent || "itsflow Agent"} | ${ping?.address || address}`;
   updateAgentFromConnection(address, ping);
   ensureMeshCentralUrlFromAgent({ force: true });
   setMessage(`Controle remoto conectado em ${address}.`, "success");
@@ -19256,7 +18848,7 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
       <section class="report-pdf-preview report-pdf-preview-full" aria-label="Prévia ilustrativa da linha no PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
         <header class="report-document-header">
           <div class="report-document-brand">
-            <img src="./assets/flowdetect-report-wordmark.png" alt="FlowDetect" />
+            <img src="./assets/itsflow-wordmark.svg" alt="itsflow" />
           </div>
           <div class="report-document-generated"><strong>RELATÓRIO DE EXECUÇÃO</strong><small>Prévia ilustrativa · uma linha</small></div>
         </header>
@@ -21106,8 +20698,8 @@ async function captureEntireFlow() {
     const diagram = window.FlowDetectFlowCapture.combinePages(captures);
     releaseFlowCapturePreview();
     flowCaptureState.diagram = diagram;
-    const title = state.library.items.find((item) => String(item.id) === String(state.library.activeId))?.nome || exportNameInput?.value?.trim() || "FlowDetect";
-    flowCaptureState.fileName = String(title).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").slice(0, 100) || "FlowDetect";
+    const title = state.library.items.find((item) => String(item.id) === String(state.library.activeId))?.nome || exportNameInput?.value?.trim() || "itsflow";
+    flowCaptureState.fileName = String(title).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").slice(0, 100) || "itsflow";
     flowCaptureState.warning = diagram.missingImages ? `${diagram.missingImages} referência(s) visual(is) indisponível(is). ` : "";
     const size = window.FlowDetectFlowCapture.pngDimensions(diagram.width, diagram.height);
     flowCaptureMeta.textContent = `${diagram.nodeCount} blocos · ${diagram.edgeCount} caminhos · ${diagram.pageCount} páginas · PNG ${size.width} × ${size.height} px`;
@@ -25016,7 +24608,7 @@ function applyChatRoadmap(roadmap,placement){
  applyRoadmap(roadmap,{resetCommandMapDrafts:true,preserveCommandMapSequence:currentPage,commandMapLayoutSnapshot:layoutSnapshot});
 }
 chatWorkspace=initChatGPT({invoke,revealBlock:async blockId=>{const block=(state.roadmap?.events||[]).find(e=>e.id===blockId);if(block){setCommandMapFocus(block.order,'auto');openExpandedTreeCard(block.order);}},assistOperation:performAssistantOperation,editorAction:performChatEditorAction,mountMap:host=>{setCommandMapZoom(1,{suppressFocusCenter:true});return chatMapWorkspace.mount(host);},getEditorContext:getChatEditorContext,navigate:navigateChatGuidance,getAutomation:()=>{const id=state.library.activeId;const item=state.library.items.find(item=>item.id===id);return id?{id,name:item?.nome||exportNameInput.value||id}:null;},openAutomation:async id=>{if(state.remoteControl.running)throw Error("Pare a execucao antes de trocar de automacao.");await persistCommandMapDraftsForExecution();const result=await invoke("open_saved_automation",{id});state.insertPanel=null;applyPersistedRoadmap(result);await refreshTestLoopData();state.library.items=result.library?.items||state.library.items;state.library.categories=result.library?.categories||state.library.categories;state.library.activeId=result.library?.active_id||id;if(result.active_automation?.nome)exportNameInput.value=result.active_automation.nome;renderLauncherLibrary();},beforeGenerate:async()=>{if(commandMapMutationActive)throw Error('Aguarde a edicao atual terminar.');},beforeMutate:()=>persistCommandMapDraftsForExecution(),getPage:()=>state.commandMapPageSequence,apply:applyChatRoadmap,openMap:()=>setWorkspaceTab('commands')});
-initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação FlowDetect',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect'&&action!=='delete')requestAnimationFrame(frameCommandMapPaths);}});
+initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação itsflow',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect'&&action!=='delete')requestAnimationFrame(frameCommandMapPaths);}});
 document.getElementById('mapPathsFit')?.addEventListener('click',frameCommandMapPaths);
 integrationsTabButton?.addEventListener("click", () => setWorkspaceTab("integrations"));
 assistTabButton.addEventListener("click", () => setWorkspaceTab("assist"));
@@ -25078,7 +24670,6 @@ if (window.ResizeObserver && studioControlScreenFrameWrap) {
   });
   agentScreenFrameResizeObserver.observe(studioControlScreenFrameWrap);
 }
-smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
 addAgentCardButton?.addEventListener("click", () => openAgentForm());
 function setHypervBaseStatus(message, variant = "info") {
   if (!hypervBaseStatus) return;
@@ -25095,7 +24686,7 @@ setupHypervBaseButton?.addEventListener("click", async () => {
     if (!status?.module || !status?.hypervisor) {
       setHypervBaseStatus("O Hyper-V ainda nao esta completamente habilitado neste computador.", "error");
     } else if (!status?.admin) {
-      setHypervBaseStatus("Permissao necessaria: feche o FlowDetect e abra o VS Code/FlowDetect como administrador.", "error");
+      setHypervBaseStatus("Permissao necessaria: feche o itsflow e abra o VS Code/itsflow como administrador.", "error");
     } else {
       setHypervBaseStatus("Hyper-V pronto. Selecione a ISO e crie a VM-base.", "success");
     }
@@ -25687,40 +25278,6 @@ agentSchedulerList?.addEventListener("click", (event) => {
   renderAgentScheduler();
   setMessage("Agendamento removido.", "success");
 });
-smartRecorderStartButton?.addEventListener("click", () => {
-  startSmartRecorder();
-});
-smartRecorderStopButton?.addEventListener("click", () => {
-  stopSmartRecorder();
-});
-smartRecorderSendButton?.addEventListener("click", () => {
-  sendSmartRecorderEventsToMap();
-});
-smartRecorderTrack?.addEventListener("click", (event) => {
-  const actionButton = event.target.closest("[data-smart-recorder-action]");
-  if (!actionButton) return;
-  const card = actionButton.closest("[data-smart-recorder-id]");
-  if (actionButton.dataset.smartRecorderAction === "adjust-image") {
-    adjustSmartRecorderClickImage(card?.dataset.smartRecorderId || "");
-  } else if (actionButton.dataset.smartRecorderAction === "confirm-click") {
-    confirmSmartRecorderClickArea(card);
-  } else if (actionButton.dataset.smartRecorderAction === "delete-event") {
-    deleteSmartRecorderEvent(card?.dataset.smartRecorderId || "");
-  }
-});
-smartRecorderTrack?.addEventListener("keydown", (event) => {
-  const delayInput = event.target.closest("[data-smart-recorder-delay-id]");
-  if (!delayInput || event.key !== "Enter") return;
-  event.preventDefault();
-  delayInput.blur();
-  updateSmartRecorderEventDelay(delayInput);
-});
-smartRecorderTrack?.addEventListener("focusout", (event) => {
-  const delayInput = event.target.closest("[data-smart-recorder-delay-id]");
-  if (delayInput) {
-    updateSmartRecorderEventDelay(delayInput);
-  }
-});
 document.getElementById("openEditorFromMap").addEventListener("click", () => setWorkspaceTab("commands"));
 tutorialReplayButton?.addEventListener("click", () => openStudioTutorial({ force: true }));
 studioTutorialNextButton?.addEventListener("click", () => {
@@ -25827,7 +25384,7 @@ launcherList.addEventListener("click", async (event) => {
       const selectedPath = await openNativeFileDialog({
         multiple: false,
         directory: false,
-        filters: [{ name: "Automacao FlowDetect", extensions: ["zip"] }],
+        filters: [{ name: "Automacao itsflow", extensions: ["zip"] }],
       });
       if (!selectedPath || Array.isArray(selectedPath)) {
         return;
@@ -25935,11 +25492,11 @@ launcherList.addEventListener("click", async (event) => {
       try {
         pickedPath = await saveNativeFileDialog({
           defaultPath: defaultZipName,
-          filters: [{ name: "Automacao FlowDetect", extensions: ["zip"] }],
+          filters: [{ name: "Automacao itsflow", extensions: ["zip"] }],
         });
       } catch (dialogError) {
         console.warn("Nao foi possivel abrir o seletor de destino do ZIP.", dialogError);
-        setMessage("Nao consegui abrir a janela de escolher pasta. Vou exportar para a pasta padrao do FlowDetect.", "info");
+        setMessage("Nao consegui abrir a janela de escolher pasta. Vou exportar para a pasta padrao do itsflow.", "info");
       }
       if (!pickedPath) {
         setBusy("Exportando ZIP");
@@ -25993,7 +25550,7 @@ launcherList.addEventListener("click", async (event) => {
       try {
         pickedPath = await saveNativeFileDialog({
           defaultPath: defaultFileName,
-          filters: [{ name: "Automacao FlowDetect para Chrome", extensions: ["json"] }],
+          filters: [{ name: "Automacao itsflow para Chrome", extensions: ["json"] }],
         });
       } catch (dialogError) {
         console.warn("Nao foi possivel abrir o seletor de destino do Chrome.", dialogError);
@@ -26646,7 +26203,7 @@ workbookFilesTabs.addEventListener("click", async (event) => {
 
 addWorkbookButton.addEventListener("click", () => {
   if (!workbookFileInput) {
-    setMessage("Nao encontrei o seletor de planilha. Reinicie o FlowDetect e tente novamente.", "error");
+    setMessage("Nao encontrei o seletor de planilha. Reinicie o itsflow e tente novamente.", "error");
     return;
   }
   workbookFileInput.value = "";
@@ -26667,7 +26224,7 @@ openWorkbookButton?.addEventListener("click", async () => {
     });
     state.workbookExternalEditOpenedAt = Date.now();
     setBusy("Pronto");
-    setMessage("Planilha aberta no editor padrao. Ao voltar para o FlowDetect, a previa sera recarregada.", "success");
+    setMessage("Planilha aberta no editor padrao. Ao voltar para o itsflow, a previa sera recarregada.", "success");
   } catch (error) {
     setBusy("Erro");
     setMessage(String(error), "error");
@@ -29190,6 +28747,13 @@ async function boot() {
       setTestExecutionState(false);
     }
 
+    await safeListen("itsflow-demonstration-imported", (event) => {
+      if (String(event.payload?.automation_id || "") !== String(state.library.activeId || "")) return;
+      refreshRoadmap("Demonstração recebida. Revise os novos blocos no mapa.").catch((error) => setMessage(String(error), "error"));
+    });
+    await safeListen("desktop-assistant-error", (event) => {
+      if (event.payload?.message) setMessage("Assistente desktop: " + event.payload.message, "error");
+    });
     await safeListen("test-execution-state", (event) => {
       setTestExecutionState(event.payload?.running);
       if (!event.payload?.running && builderStatus.textContent === "Executando teste") {
@@ -29298,6 +28862,8 @@ async function boot() {
   } catch (error) {
     setBusy("Erro");
     setMessage(String(error), "error");
+  } finally {
+    window.dispatchEvent(new Event("itsflow-startup-ready"));
   }
 }
 initTableBlocks({invoke,applyRoadmap});

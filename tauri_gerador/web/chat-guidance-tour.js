@@ -4,7 +4,7 @@ export function createChatGuidance({getEvent,getEvents,openTab,openBlock,isRunni
  let dispose=()=>{};
  return async function navigate(target) {
   if(isRunning())throw Error('Pare a execução antes de abrir a configuração guiada.');
-  if(!target||!['commands','workbook','integrations','smart-recorder'].includes(target.tab))throw Error('Destino de orientação inválido.');
+  if(!target||!['commands','workbook','integrations'].includes(target.tab))throw Error('Destino de orientação inválido.');
   let block=null;
   if(target.order!=null||target.block_id){
    block=target.block_id?getEvents().find(event=>event.id===target.block_id):getEvent(Number(target.order));
@@ -81,7 +81,7 @@ export function createChatGuidance({getEvent,getEvents,openTab,openBlock,isRunni
    const item=knowledge.targets[tour[index]],root=card();
    // Internal tab navigation only: never fire Capture, Procurar, Save or a field change.
    if(item?.panel&&root){const tab=root.querySelector(`[data-recognition-tab-target="${item.panel}"]`);if(tab&&!tab.classList.contains('is-active'))tab.click();}
-   label.textContent=block?`Bloco ${currentBlock()?.order||block.order} · Orientação ${index+1} de ${tour.length}`:'Assistente FlowDetect';stepTitle.textContent=item?.label||'Como configurar';text.textContent=item?.description||target.reason||'Configure esta etapa e volte ao chat para continuar.';
+   label.textContent=block?`Bloco ${currentBlock()?.order||block.order} · Orientação ${index+1} de ${tour.length}`:'Assistente itsflow';stepTitle.textContent=item?.label||'Como configurar';text.textContent=item?.description||target.reason||'Configure esta etapa e volte ao chat para continuar.';
    previous.disabled=index===0;controls.hidden=!tour.length;next.textContent=index===tour.length-1?'Concluir orientação':'Próximo passo';
    const control=findControl();if(control)control.scrollIntoView({block:'nearest',inline:'nearest',behavior:'auto'});schedule();
   }

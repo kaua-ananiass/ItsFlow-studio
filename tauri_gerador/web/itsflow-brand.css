@@ -1,0 +1,31 @@
+/* itsflow Studio: restrained refinements, shared with the existing workspace. */
+:root {
+  --bg:#04091e; --panel:#0c172b; --panel-strong:#080f23; --panel-soft:#102138;
+  --accent:#00bfdc; --accent-soft:#72f4d0; --white:#f2f7ff;
+  --brand-gradient:linear-gradient(120deg,#98ffd2 0%,#00ecd4 48%,#00b2f4 100%);
+}
+body { background-color:var(--bg); }
+.launcher-shell { background:radial-gradient(ellipse at 50% 45%,#00d6d806,transparent 60%),var(--bg); }
+.itsflow-brand { display:inline-flex; align-items:center; gap:10px; flex-shrink:0; color:var(--white); text-decoration:none; }
+.itsflow-brand img { display:block; width:34px; height:34px; object-fit:contain; }
+.itsflow-wordmark { display:flex; flex-direction:column; line-height:1; }
+.itsflow-wordmark strong { font-family:var(--font-display);font-size:21px;font-weight:750;letter-spacing:-1px; }
+.itsflow-wordmark strong span { color:#00d7e8; }
+.itsflow-wordmark small { margin-top:4px;font-family:var(--font-body);font-size:8px;letter-spacing:5px;font-weight:500; }
+.workspace-tabs > .itsflow-brand { padding:3px 15px 3px 3px; }
+.welcome-overlay { background:radial-gradient(ellipse at 60% 40%,#00bfdc0d,transparent 55%),#04091ef5; }
+.welcome-visual-panel { display:grid;place-items:center; }
+.welcome-hero-art.itsflow-welcome-mark { width:min(74%,380px);height:auto;filter:drop-shadow(0 18px 55px #00d6d21a); }
+.welcome-copy-panel h1 .welcome-title-flow { color:#f7fbff;background:none;filter:none;text-shadow:none; }
+.welcome-copy-panel h1 .welcome-title-detect { color:#00d7e8;margin-left:0;text-shadow:none; }
+.welcome-studio { display:block;margin-top:20px;color:#e8f3ff;font-size:clamp(14px,2vw,21px);letter-spacing:.5em;line-height:1.4;font-weight:450; }
+.welcome-enter-button { background:var(--brand-gradient);color:#041822;border:0;box-shadow:0 6px 22px #00cbd51a; }
+.welcome-enter-button:hover { box-shadow:0 8px 28px #00cbd529; }
+.workspace-tabs button.is-active { border-color:#00c9df66; }
+.fdchat { --chat-accent:#72f4d0; }
+.fdchat-brand-symbol.itsflow-chat-symbol { background:transparent;border:0;border-radius:0; }
+.itsflow-chat-symbol img { width:32px;height:32px; }
+.fdchat-brand-symbol.sync-chat-symbol { background:transparent;border:0;border-radius:0;color:#8ce8d3; }
+.sync-chat-symbol svg { display:block; }
+@media(max-width:1180px) { .workspace-tabs > .itsflow-brand { gap:5px;padding-right:6px; }.workspace-tabs .itsflow-wordmark strong { font-size:17px; }.workspace-tabs .itsflow-wordmark small { font-size:7px;letter-spacing:3px; }.workspace-tabs .itsflow-brand img { width:28px;height:28px; } }
+@media(prefers-reduced-motion:reduce) { .itsflow-welcome-mark { animation:none!important; } }

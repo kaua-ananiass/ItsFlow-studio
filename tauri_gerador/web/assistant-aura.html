@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;pointer-events:none}
+:root{--aura-angle:180deg;--trace-delay:0ms;--aura-elapsed:0ms}
+html[data-edge=right]{--aura-angle:270deg;--trace-delay:550ms}html[data-edge=left]{--aura-angle:90deg;--trace-delay:550ms}html[data-edge=bottom]{--aura-angle:0deg;--trace-delay:1250ms}
+.aura-base{position:absolute;inset:0;opacity:.42;background:linear-gradient(var(--aura-angle),#64eed657,transparent 90%)}
+.aura-line{position:absolute;inset:0;border-top:1px solid #b0ffe776;opacity:.6}
+html[data-edge=right] .aura-line{border:0;border-right:1px solid #83def075}html[data-edge=left] .aura-line{border:0;border-left:1px solid #8beed775}html[data-edge=bottom] .aura-line{border:0;border-bottom:1px solid #8beed775}
+.aura-trace{position:absolute;top:0;height:100%;width:50%;opacity:0;background:linear-gradient(var(--aura-angle),#e0fff5d9,#58ffe669 23%,#00e0dc12 70%,transparent);will-change:transform,opacity}
+.aura-trace-one{left:0;transform-origin:right center}.aura-trace-two{right:0;transform-origin:left center}
+html[data-edge=bottom] .aura-trace-one{transform-origin:left center}html[data-edge=bottom] .aura-trace-two{transform-origin:right center}
+html[data-edge=left] .aura-trace,html[data-edge=right] .aura-trace{width:100%;height:100%;left:0;right:auto;transform-origin:center top}html[data-edge=left] .aura-trace-two,html[data-edge=right] .aura-trace-two{display:none}
+.aura-enter .aura-base{animation:aura-rise 2200ms ease-out both,aura-breathe 3800ms ease-in-out infinite;animation-delay:calc(0ms - var(--aura-elapsed)),calc(2200ms - var(--aura-elapsed))}
+.aura-enter .aura-line{animation:aura-line-rise 2200ms ease-out both;animation-delay:calc(0ms - var(--aura-elapsed))}
+.aura-enter .aura-trace{animation:aura-trace-x 1050ms cubic-bezier(.2,.65,.25,1) both;animation-delay:calc(var(--trace-delay) - var(--aura-elapsed))}
+html[data-edge=left] .aura-enter .aura-trace,html[data-edge=right] .aura-enter .aura-trace{animation-name:aura-trace-y}
+@keyframes aura-rise{0%{opacity:0}25%{opacity:.15}65%{opacity:.9}100%{opacity:.42}}@keyframes aura-breathe{50%{opacity:.25}}
+@keyframes aura-line-rise{0%{opacity:0}65%{opacity:1}100%{opacity:.6}}
+@keyframes aura-trace-x{0%{opacity:0;transform:scaleX(0)}12%{opacity:1}65%{opacity:.9;transform:scaleX(1)}100%{opacity:0;transform:scaleX(1)}}
+@keyframes aura-trace-y{0%{opacity:0;transform:scaleY(0)}12%{opacity:1}65%{opacity:.9;transform:scaleY(1)}100%{opacity:0;transform:scaleY(1)}}
+@media(prefers-reduced-motion:reduce){.aura-enter *{animation:none!important}.aura-trace{display:none}.aura-base{opacity:.35}}
+</style></head><body aria-hidden="true"><div class="aura-base"></div><div class="aura-line"></div><div class="aura-trace aura-trace-one"></div><div class="aura-trace aura-trace-two"></div><script>
+document.documentElement.dataset.edge=window.itsflowAuraEdge||'top';
+window.startItsflowAura=(started=Date.now())=>{
+ document.body.classList.remove('aura-enter');
+ document.documentElement.style.setProperty('--aura-elapsed',String(Math.max(0,Date.now()-started))+'ms');
+ void document.body.offsetWidth;document.body.classList.add('aura-enter');
+};
+window.startItsflowAura(window.itsflowAuraStarted||Date.now());
+</script></body></html>
