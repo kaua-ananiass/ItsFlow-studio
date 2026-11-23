@@ -63,7 +63,8 @@ test('failed preflight releases the page and tab reservations', async () => {
 
 test('stop affects only the addressed execution, not another tab', async () => {
   const a = { id: 'r1', pageId: 'p1' }, b = { id: 'r2', pageId: 'p2' };
-  const ctx = vm.createContext({ activeRuns: new Map([['r1', a], ['r2', b]]), addLog: async () => {} });
+  const ctx = vm.createContext({ activeRuns: new Map([['r1', a], ['r2', b]]), addLog: async () => {},
+    chrome: { tabs: { sendMessage: async () => {} } } });
   vm.runInContext(fn(worker, 'handleMessage'), ctx);
   assert.equal((await ctx.handleMessage({ type: 'flowdetect-stop', runId: 'r1', pageId: 'p2' })).stopped, false);
   assert.equal((await ctx.handleMessage({ type: 'flowdetect-stop' })).stopped, false);

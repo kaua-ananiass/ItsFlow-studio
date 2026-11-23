@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.96";
+const CONTENT_RUNTIME_VERSION = "0.2.101";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);

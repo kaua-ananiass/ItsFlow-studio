@@ -1,5 +1,27 @@
 # FlowDetect para Chrome
 
+Versão 0.2.101: análise visual do recorte no chat e botão **Analisar imagem**
+para repetir. Navegações são detectadas também durante a explicação da etapa
+e em rotas SPA. Reinicie o Studio e recarregue extensão e abas.
+
+Versão 0.2.100: criação **uma etapa por vez**. Cada clique ou captura pausa,
+o assistente pergunta a finalidade e sua explicação fica na etapa. Continue
+com **Gravar próxima etapa**. Inclui brilho de envio à borda do chat e animação
+de recebimento no painel. Reinicie o Studio e recarregue extensão e abas.
+
+Versão 0.2.99: **Capturar mensagem** registra um recorte como etapa de análise,
+com miniatura e texto esperado revisável, sem clicar. Atualize o Studio e
+recarregue a extensão e as abas usadas na demonstração.
+
+Versão 0.2.98: painel compacto com rascunho fixo no rodapé, confirmação animada
+de cliques e cursor **Assistente** para apontar campos reais sem clicar neles.
+Atualize o Studio e recarregue também as abas da demonstração.
+
+Versão 0.2.97: **Criar com IA** abre o assistente lateral para demonstrar uma
+tarefa, revisar o rascunho e criar blocos no Studio. Usa a mesma animação de
+pensamento do chat. Exige Studio atualizado e pareado.
+[Como usar e limites da captura](../docs/CHROME_DEMONSTRACAO.md).
+
 Versão 0.2.74: marque visualmente a área da variável na imagem do OCR,
 arrastando e redimensionando pelos cantos. [Como configurar](../docs/VARIAVEIS_OCR.md).
 

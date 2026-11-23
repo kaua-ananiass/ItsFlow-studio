@@ -7550,6 +7550,9 @@ class ExecutorAutomacao:
             return self.resultado_fluxo("parar")
         detalhes = evento.get("detalhes") or {}
         acao = str(detalhes.get("ao_sucesso", "continuar") or "continuar").strip().lower()
+        if acao == "parar":
+            safe_print("Reconhecimento confirmado. A configuração deste bloco solicita parar a automação.", flush=True)
+            return self.resultado_fluxo("parar")
         bloco = detalhes.get("bloco_sucesso", "")
         sequencia = str(detalhes.get("sequencia_sucesso", "") or "").strip()
         atraso_sequencia = max(0.0, float(detalhes.get("atraso_antes_sequencia_sucesso", 0) or 0))

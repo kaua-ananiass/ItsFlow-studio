@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>FlowDetect para Chrome</title>
-    <link rel="stylesheet" href="sidepanel.css?v=0.2.96">
+    <title>itsflow para Chrome</title>
+    <link rel="stylesheet" href="sidepanel.css?v=0.2.101">
   </head>
   <body>
     <main class="app-shell">
@@ -12,9 +12,9 @@
       <div class="popup-fixed-header">
       <header class="popup-toolbar">
         <div class="popup-brand">
-          <img class="popup-brand-icon" src="icons/icon-48.png" alt="">
+          <img class="popup-brand-icon" src="demo-mark.svg" alt="">
           <div>
-            <p class="brand-kicker">FlowDetect para Chrome</p>
+            <p class="brand-kicker">itsflow para Chrome</p>
             <h1>Automa&ccedil;&otilde;es</h1>
             <span id="studioConnection" class="studio-connection" title="Aguardando conexao com o Studio">Studio desconectado</span>
           </div>
@@ -32,6 +32,7 @@
       <nav id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="Áreas do FlowDetect">
         <button id="workspaceAutomations" class="workspace-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="automationList">▦ Automações</button>
         <button id="workspaceAssisted" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="assistedView">◉ Execuções assistidas <span id="assistedLiveCount" class="workspace-live-count" hidden></span></button>
+        <button id="openDemonstration" class="workspace-tab" type="button" title="Abrir o assistente de demonstração no painel lateral">Criar com IA</button>
       </nav>
       </div>
       <section class="execution-pages" aria-labelledby="executionPagesHeading">

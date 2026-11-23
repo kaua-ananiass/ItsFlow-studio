@@ -34,22 +34,8 @@ O contexto enviado contém tipos/títulos dos blocos, nomes de colunas, variáve
 
 O modo **Mapa + conversa** usa o editor real do Studio. Em **Fazer comigo**, pedidos completos podem criar vários blocos em sequência, com perguntas essenciais feitas antes da primeira alteração. O cursor **Assistente** mostra as ações e acompanha a navegação no mapa. Veja os exemplos, limites e validação em [Assistente visual — 12/11/2026](ASSISTENTE_VISUAL_2026-11-12.md).
 
-## Demonstração no Chrome
+## Assistente Sync no desktop e no Chrome
 
-É possível evoluir para **Gravar demonstração → revisar ações → gerar fluxo**. A extensão registrará explicitamente cliques, navegações, alvos DOM e estruturas de tabelas; a IA poderá propor loops e variáveis. O usuário precisará indicar os trechos que devem repetir, e diferenças de empresa serão verificadas antes de executar. O login não acompanha o navegador sozinho. A gravação de demonstração para esta integração ainda não está implementada nesta versão.
+O chat universal interpreta pedidos e perguntas sem alternar modos. Na página **Inicial**, use **Demonstrar no desktop** para abrir o Sync no notch do monitor, selecionar áreas e montar reconhecimentos, cliques, validações e preenchimentos por etapas. O painel lateral da extensão também permite demonstrar uma página autorizada. O rascunho precisa ser revisado e enviado ao mapa; isso não executa a automação.
 
-## Implementação e validação
-
-O backend Rust implementa OAuth com PKCE/S256, state/nonce por tentativa, callback somente em 127.0.0.1, verificação de assinatura/issuer/audience/expiração do ID token, renovação serializada e revogação ao sair. No Windows, credenciais ficam no app_data do Studio em arquivo protegido por DPAPI, fora do projeto e da interface. O ID desta instalação persiste ao desconectar. Não lê cookies ou tokens de outros aplicativos.
-
-Requests usam Responses com `store:false` e `stream:true`; só respostas com `response.completed` podem virar propostas. A UI nunca recebe credenciais. O Python compila os dados da proposta usando os construtores existentes e valida novamente antes de salvar.
-
-Testes locais não substituem a validação real do login/limites de uma conta. Nenhum login real é considerado validado até concluir autorização e uma geração na conta do usuário.
-
-Fontes oficiais:
-
-- https://developers.openai.com/siwc/token-sharing-open-source/sign-in
-- https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions
-- https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
-- https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
-- https://developers.openai.com/cookbook/articles/sign-in-with-chatgpt
+Veja [Assistente desktop](ASSISTENTE_DESKTOP.md), [Chat universal](CHAT_UNIVERSAL_ITSFLOW.md) e [Demonstração no Chrome](CHROME_DEMONSTRACAO.md).

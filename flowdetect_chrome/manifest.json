@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "FlowDetect para Chrome",
-  "description": "Executa automacoes web exportadas pelo FlowDetect Studio.",
-  "version": "0.2.96",
+  "name": "itsflow para Chrome",
+  "description": "Demonstre tarefas com o assistente e execute automações conectadas ao itsflow Studio.",
+  "version": "0.2.101",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -20,7 +20,8 @@
     "storage",
     "unlimitedStorage",
     "webRequest",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
     "http://*/*",
@@ -32,7 +33,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Abrir FlowDetect",
+    "default_title": "Abrir itsflow",
     "default_popup": "sidepanel.html",
     "default_icon": {
       "16": "icons/icon-16.png",
@@ -43,8 +44,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["input-lock.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "input-lock.js"
+      ],
       "all_frames": true,
       "match_about_blank": true,
       "run_at": "document_start"
@@ -57,9 +63,14 @@
       "js": [
         "page-outline.js",
         "automation-cursor.js",
-        "content.js"
+        "content.js",
+        "demonstration-capture-content.js",
+        "demonstration-content.js"
       ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "side_panel": {
+    "default_path": "demonstration.html"
+  }
 }

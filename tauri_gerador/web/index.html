@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FlowDetect</title>
+    <title>itsflow Studio</title>
     <link rel="preload" href="./vendor/fonts/montserrat-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="./vendor/fonts/plus-jakarta-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="./vendor/fonts/cormorant-garamond-latin.woff2" as="font" type="font/woff2" crossorigin />
@@ -16,22 +16,35 @@
     <link rel="stylesheet" href="./chatgpt.css" />
     <link rel="stylesheet" href="./chatgpt-react.css" />
     <link rel="stylesheet" href="./recognition-editor.css" />
+    <link rel="stylesheet" href="./itsflow-brand.css" />
+    <link rel="stylesheet" href="./itsflow-chat.css" />
+    <link rel="stylesheet" href="./studio-startup.css" />
+    <script src="./studio-startup.js" defer></script>
+    <link rel="icon" type="image/svg+xml" href="./assets/itsflow-mark.svg" />
   </head>
   <body>
+    <div id="studioStartup" class="studio-startup" aria-hidden="true">
+      <div class="studio-startup-glow"></div>
+      <div class="studio-startup-brand">
+        <img class="studio-startup-mark" src="./assets/itsflow-mark.svg" alt="" />
+        <div class="studio-startup-name"><strong>its<span>flow</span></strong><small>STUDIO</small></div>
+        <span class="studio-startup-line"></span>
+      </div>
+    </div>
     <section id="loginOverlay" class="login-overlay welcome-overlay" aria-modal="true" role="dialog" aria-labelledby="loginTitleText">
       <div class="welcome-shell">
         <div class="login-card welcome-card">
           <section class="welcome-visual-panel" aria-hidden="true">
             <img
-              src="./assets/flowdetect-cards-sem-fundo.png"
-              alt="Cartoes visuais do FlowDetect"
-              class="welcome-hero-art"
+              src="./assets/itsflow-mark.svg"
+              alt="Símbolo itsflow Studio"
+              class="welcome-hero-art itsflow-welcome-mark"
             />
           </section>
 
           <section class="welcome-copy-panel">
             <h1 id="loginTitleText">
-              <span class="welcome-title-flow">Flow</span><span class="welcome-title-detect">Detect</span>
+              <span class="welcome-title-flow">its</span><span class="welcome-title-detect">flow</span><span class="welcome-studio">Studio</span>
             </h1>
 
             <div id="loginActivationSummary" class="login-activation-summary welcome-summary">
@@ -59,7 +72,7 @@
         <div class="hero-noise"></div>
         <div class="hero-copy">
           <div class="brand-line">
-            <img src="./assets/logo-design.png" alt="Design" class="brand-logo" />
+            <img src="./assets/itsflow-wordmark.svg" alt="itsflow Studio" class="brand-logo" />
             <span class="eyebrow">Gerador de automacoes</span>
           </div>
           <h1>Monte o roteiro em blocos visuais conectados</h1>
@@ -92,7 +105,7 @@
                 <input id="testLoopStartInput" type="number" min="1" step="1" value="1" />
               </label>
               <label>
-                <span>Janela do FlowDetect</span>
+                <span>Janela do itsflow</span>
                 <select id="testWindowModeSelect">
                   <option value="normal">Manter aberta</option>
                   <option value="minimize" selected>Minimizar ao executar</option>
@@ -143,23 +156,23 @@
       </section>
 
       <section class="workspace-tabs">
-        <button id="launcherTabButton" class="workspace-tab is-active" data-tab="launcher">Launcher de Automacoes</button>
+        <div class="itsflow-brand" aria-label="itsflow Studio"><img src="./assets/itsflow-mark.svg" alt="" /><span class="itsflow-wordmark"><strong>its<span>flow</span></strong><small>STUDIO</small></span></div>
+        <button id="integrationsTabButton" class="workspace-tab is-active" data-tab="integrations">Inicial</button>
+        <button id="launcherTabButton" class="workspace-tab" data-tab="launcher">Launcher de Automacoes</button>
         <button id="editorTabButton" class="workspace-tab" data-tab="editor">Montagem e edicao</button>
         <button id="assistTabButton" class="workspace-tab" data-tab="assist">Execucao assistida</button>
         <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
         <button id="agentsTabButton" class="workspace-tab" data-tab="agents">Agentes</button>
-        <button id="integrationsTabButton" class="workspace-tab" data-tab="integrations">Chat IA</button>
         <button id="agentScreenTabButton" class="workspace-tab" data-tab="agent-screen">Tela do Agent</button>
-        <button id="smartRecorderTabButton" class="workspace-tab" data-tab="smart-recorder">Gravador inteligente</button>
         <div id="sessionChip" class="workspace-session-chip">Sessao bloqueada</div>
       </section>
 
-      <section id="integrationsPanel" class="workspace-panel" aria-label="Assistente de IA">
-        <section id="chatgptWorkspace" class="ai-workspace" aria-label="FlowDetect Chat"></section>
+      <section id="integrationsPanel" class="workspace-panel is-active" aria-label="Assistente de IA">
+        <section id="chatgptWorkspace" class="ai-workspace" aria-label="itsflow Chat"></section>
       </section>
 
-      <section id="launcherPanel" class="workspace-panel is-active">
+      <section id="launcherPanel" class="workspace-panel">
         <section class="launcher-shell">
           <div class="launcher-top-zone">
             <header class="launcher-header">
@@ -593,7 +606,7 @@
                 <input id="assistLoopStartInput" type="number" min="1" step="1" value="1" />
               </label>
               <label>
-                <span>Janela do FlowDetect</span>
+                <span>Janela do itsflow</span>
                 <select id="assistWindowModeSelect">
                   <option value="normal">Manter aberta</option>
                   <option value="minimize" selected>Minimizar ao executar</option>
@@ -882,54 +895,11 @@
         </section>
       </section>
 
-      <section id="smartRecorderPanel" class="workspace-panel">
-        <section class="smart-recorder-shell">
-          <header class="smart-recorder-header">
-            <div>
-              <span class="command-map-eyebrow">Gravador inteligente</span>
-              <h2>Ensine a automacao fazendo</h2>
-              <p>Inicie a gravacao, use o sistema normalmente e o FlowDetect cria blocos visuais conforme voce clica e digita.</p>
-            </div>
-            <div class="smart-recorder-actions">
-              <button id="smartRecorderStartButton" class="primary-button" type="button">Iniciar gravacao</button>
-              <button id="smartRecorderStopButton" class="ghost-button" type="button" disabled>Parar</button>
-              <button id="smartRecorderSendButton" class="soft-button" type="button" disabled>Enviar para o mapa</button>
-            </div>
-          </header>
-
-          <section class="smart-recorder-status-grid">
-            <article>
-              <span>Status</span>
-              <strong id="smartRecorderStatus">Pronto</strong>
-            </article>
-            <article>
-              <span>Eventos</span>
-              <strong id="smartRecorderCount">0</strong>
-            </article>
-            <article>
-              <span>Como parar</span>
-              <strong>ESC</strong>
-            </article>
-          </section>
-
-          <section class="smart-recorder-tip">
-            <strong>Confirme os cliques visuais</strong>
-            <span>Cada clique salva uma imagem pequena ao redor do ponto. Se quiser uma area mais precisa, use “Ajustar area” no card.</span>
-          </section>
-
-          <section class="smart-recorder-map">
-            <div id="smartRecorderTrack" class="smart-recorder-track">
-              <div class="empty-state">Nenhum bloco gravado ainda. Clique em Iniciar gravacao para comecar.</div>
-            </div>
-          </section>
-        </section>
-      </section>
-
       <section id="remoteControlPanel" class="workspace-panel" hidden aria-hidden="true">
         <section class="studio-control-shell">
           <header class="studio-control-header">
             <div>
-              <p class="panel-kicker">FlowDetect Control</p>
+              <p class="panel-kicker">itsflow Control</p>
               <h2>Controle remoto do Agent</h2>
               <p id="studioControlHint">Conecte no Agent do outro PC para importar, visualizar e executar automacoes.</p>
             </div>
@@ -1077,7 +1047,7 @@
             </div>
           </div>
           <section id="agentsMachinesView">
-          <p id="agentsPhysicalHint" class="agents-physical-hint" hidden>Computadores dedicados, sem VM. Abra o FlowDetect Agent no outro PC e cadastre o IP exibido nele. Use apenas uma rede confiável; não exponha a porta à internet.</p>
+          <p id="agentsPhysicalHint" class="agents-physical-hint" hidden>Computadores dedicados, sem VM. Abra o itsflow Agent no outro PC e cadastre o IP exibido nele. Use apenas uma rede confiável; não exponha a porta à internet.</p>
           <section id="hypervBasePanel" class="agents-create-panel" hidden>
             <div id="hypervBaseStatus" class="hyperv-base-status" role="status">Verificando o Hyper-V...</div>
             <label><span>Nome da VM-base</span><input id="hypervBaseNameInput" type="text" value="FlowDetect-Windows10-Base" /></label>
@@ -1295,7 +1265,7 @@
             </div>
             <button id="assistWindowPickerCloseButton" class="micro-button" type="button">Fechar</button>
           </div>
-          <p class="capture-copy">A lista mostra janelas abertas com titulo visivel. O proprio FlowDetect fica bloqueado para evitar execucao no lugar errado.</p>
+          <p class="capture-copy">A lista mostra janelas abertas com titulo visivel. O proprio itsflow fica bloqueado para evitar execucao no lugar errado.</p>
           <p id="assistWindowPickerStatus" class="capture-hint">Carregando janelas abertas...</p>
           <div id="assistWindowPickerList" class="assist-window-picker-list"></div>
           <div class="assist-window-picker-actions">
@@ -1320,7 +1290,7 @@
           <span id="studioTutorialStepText">Passo 1 de 6</span>
           <button id="studioTutorialSkipButton" type="button">Pular</button>
         </div>
-        <h2 id="studioTutorialTitle">Bem-vindo ao FlowDetect Studio</h2>
+        <h2 id="studioTutorialTitle">Bem-vindo ao itsflow Studio</h2>
         <p id="studioTutorialText">Conheca rapidamente as areas principais do programa.</p>
         <div id="studioTutorialExtra" class="studio-tutorial-extra" hidden></div>
         <div class="studio-tutorial-actions">
@@ -1360,7 +1330,7 @@
 
     <dialog id="chromePairDialog" class="ocr-test-dialog chrome-pair-dialog" aria-labelledby="chromePairTitle">
       <div class="ocr-test-dialog-head">
-        <div><span class="panel-kicker">FlowDetect para Chrome</span><h2 id="chromePairTitle">Conectar extensão</h2></div>
+        <div><span class="panel-kicker">itsflow para Chrome</span><h2 id="chromePairTitle">Conectar extensão</h2></div>
         <button id="chromePairCloseButton" class="ghost-button" type="button">Fechar</button>
       </div>
       <p class="ocr-test-note">Abra a extensão no Chrome e digite aqui o código de 6 números mostrado nela.</p>

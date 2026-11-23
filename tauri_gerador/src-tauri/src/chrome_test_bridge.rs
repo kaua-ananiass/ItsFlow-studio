@@ -15,11 +15,15 @@ use std::{
 };
 
 const ADDRESS: &str = "127.0.0.1:18453";
-const EXTENSION_VERSION: &str = "0.2.96";
+const EXTENSION_VERSION: &str = "0.2.101";
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static PORT_IN_USE: AtomicBool = AtomicBool::new(false);
 static STARTING: Mutex<()> = Mutex::new(());
 static BRIDGE: OnceLock<Arc<(Mutex<BridgeState>, Condvar)>> = OnceLock::new();
+type AssistantHandler=Arc<dyn Fn(Value)->Result<Value,String>+Send+Sync>;
+static ASSISTANT:OnceLock<AssistantHandler>=OnceLock::new();
+static ASSISTANT_BUSY:AtomicBool=AtomicBool::new(false);
+pub fn configure_assistant(handler:AssistantHandler){let _=ASSISTANT.set(handler);}
 
 #[derive(Default)]
 struct BridgeState {
@@ -324,7 +328,7 @@ fn read_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String> {
             return Err("Requisicao incompleta".into());
         }
         bytes.extend_from_slice(&chunk[..size]);
-        if bytes.len() > 65536 {
+        if bytes.len() > 4*1024*1024+16384 {
             return Err("Requisicao muito grande".into());
         }
         if let Some(end) = bytes
@@ -343,7 +347,8 @@ fn read_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String> {
                         .flatten()
                 })
                 .unwrap_or(0);
-            if length > 32768 {
+            let assistant=header.lines().next().is_some_and(|line|line.starts_with("POST /assistant "));
+            if length > if assistant {4*1024*1024} else {32768} {
                 return Err("Corpo muito grande".into());
             }
             if bytes.len() >= end + length {
@@ -443,6 +448,19 @@ fn handle_client(mut stream: TcpStream) {
                 json!({"job":if still_paired { state.pending.take() } else { None },"paired":still_paired}),
                 origin.as_deref(),
             )
+        }
+    } else if method == "POST" && path == "/assistant" {
+        let code=request_header(&request,"x-flowdetect-pair-code").unwrap_or("");
+        let shared=bridge();let (lock,_)=&*shared;
+        let paired=lock.lock().map(|state|state.paired_extension_id==claimed_id&&!code.is_empty()&&state.paired_code==code).unwrap_or(false);
+        if !paired||request_header(&request,"x-flowdetect-version")!=Some(EXTENSION_VERSION){
+            response("403 Forbidden",json!({"error":"Conecte esta extensao ao Studio atualizado."}),origin.as_deref())
+        }else if ASSISTANT_BUSY.compare_exchange(false,true,Ordering::SeqCst,Ordering::SeqCst).is_err(){
+            response("409 Conflict",json!({"error":"O assistente esta ocupado. Aguarde a resposta atual."}),origin.as_deref())
+        }else{
+            let result=serde_json::from_slice::<Value>(&body).map_err(|_|"Pedido invalido".to_string()).and_then(|value|ASSISTANT.get().ok_or("Reinicie o Studio para ativar o assistente Chrome.".to_string())?(value));
+            ASSISTANT_BUSY.store(false,Ordering::SeqCst);
+            match result{Ok(value)=>response("200 OK",value,origin.as_deref()),Err(error)=>response("400 Bad Request",json!({"error":error}),origin.as_deref())}
         }
     } else if method == "POST" && path == "/result" {
         let payload: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
@@ -603,6 +621,34 @@ mod tests {
         assert!(imported.contains("import_automation"));
         let mut state = lock.lock().unwrap();
         state.active_id.clear();
+        state.paired_extension_id.clear();
+        state.paired_code.clear();
+    }
+
+    #[test]
+    fn assistant_requires_paired_identity_and_matching_version() {
+        let _guard = TEST_GUARD.lock().unwrap();
+        let shared = bridge();
+        let (lock, _) = &*shared;
+        {
+            let mut state = lock.lock().unwrap();
+            state.paired_extension_id.clear();
+            state.paired_code.clear();
+        }
+        assert!(exchange("POST", "/assistant", r#"{"operation":"status"}"#).contains("403 Forbidden"));
+        {
+            let mut state = lock.lock().unwrap();
+            state.paired_extension_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
+            state.paired_code = "123456".into();
+        }
+        assert!(exchange_version("POST", "/assistant", "{}", "0.2.96").contains("403 Forbidden"));
+        configure_assistant(Arc::new(|request| Ok(json!({"operation":request["operation"]}))));
+        let reply = exchange("POST", "/assistant", r#"{"operation":"status"}"#);
+        assert!(reply.contains("200 OK"));
+        assert!(reply.contains("\"operation\":\"status\""));
+        let large=serde_json::json!({"operation":"status","snapshot":"x".repeat(100_000)}).to_string();
+        assert!(exchange("POST","/assistant",&large).contains("200 OK"));
+        let mut state = lock.lock().unwrap();
         state.paired_extension_id.clear();
         state.paired_code.clear();
     }

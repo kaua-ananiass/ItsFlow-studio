@@ -4,7 +4,7 @@ import json
 import re
 
 KINDS = {"reuse", "text", "navigate", "keys", "ocr", "table", "manual"}
-TABS = {"commands", "workbook", "integrations", "smart-recorder"}
+TABS = {"commands", "workbook", "integrations"}
 
 
 def configuration(event, patch):
