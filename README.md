@@ -1,37 +1,45 @@
 <div align="center">
-<img src="docs/readme-media/flowdetect-banner.png" alt="FlowDetect — automação visual para desktop e web" width="100%">
+<img src="docs/readme-media/itsflow-banner.svg" alt="itsflow Studio — automação visual para desktop e web" width="100%">
 
-# FlowDetect
+# itsflow Studio
 
-**Atualização de desenvolvimento:** [assistente visual, criação de blocos em lote e contas ChatGPT](docs/ASSISTENTE_VISUAL_2026-11-12.md).
+**Nova identidade e assistente Sync:** [conheça as novidades do itsflow Studio](docs/ATUALIZACAO_ITSFLOW_2026-11-23.md).
 **AUTOMAÇÃO VISUAL · DESKTOP & WEB · STUDIO + AGENT + CHROME**
 
 Crie, teste e execute automações em blocos em sistemas Windows e páginas web — mesmo sem API.
 
-[**⬇️ Baixar última versão**](https://github.com/kaua-ananiass/FlowDetect/releases/latest) · [**Todas as releases**](https://github.com/kaua-ananiass/FlowDetect/releases) · [**Recursos**](#recursos-em-destaque) · [**Galeria**](#galeria)
+[**⬇️ Baixar última versão**](https://github.com/kaua-ananiass/ItsFlow-studio/releases/latest) · [**Todas as releases**](https://github.com/kaua-ananiass/ItsFlow-studio/releases) · [**Recursos**](#recursos-em-destaque) · [**Galeria**](#galeria)
 
-<img src="https://img.shields.io/github/v/release/kaua-ananiass/FlowDetect?label=release&color=orange" alt="Release"> <img src="https://img.shields.io/badge/Studio-Tauri%20%2B%20Rust-1b3557" alt="Studio"> <img src="https://img.shields.io/badge/Agent-Windows-1b3557" alt="Agent"> <img src="https://img.shields.io/badge/Chrome-Extens%C3%A3o-1b3557" alt="Chrome">
+<img src="https://img.shields.io/github/v/release/kaua-ananiass/ItsFlow-studio?label=release&color=orange" alt="Release"> <img src="https://img.shields.io/badge/Studio-Tauri%20%2B%20Rust-1b3557" alt="Studio"> <img src="https://img.shields.io/badge/Agent-Windows-1b3557" alt="Agent"> <img src="https://img.shields.io/badge/Chrome-Extens%C3%A3o-1b3557" alt="Chrome">
 </div>
 
 ---
 
 ## Visão geral
-O **FlowDetect** transforma tarefas repetitivas em fluxos visuais reutilizáveis. Combina **teclado, mouse, OCR, reconhecimento por imagem, planilhas, interação com o navegador e decisões condicionais** para automatizar rotinas em ERPs, portais web, sistemas administrativos e aplicações desktop.
+O **itsflow Studio** transforma tarefas repetitivas em fluxos visuais reutilizáveis. Combina **teclado, mouse, OCR, reconhecimento por imagem, planilhas, interação com o navegador e decisões condicionais** para automatizar rotinas em ERPs, portais web, sistemas administrativos e aplicações desktop.
 
 ## Um ecossistema, três componentes
-<table><tr><td width="33%" valign="top"><h3>🧩 FlowDetect Studio</h3><p><b>Crie e acompanhe.</b> Editor visual de blocos, sequências, loops, gravador inteligente e testes assistidos.</p></td><td width="33%" valign="top"><h3>🖥️ FlowDetect Agent</h3><p><b>Execute remotamente.</b> Agente Windows para receber automações e enviar andamento ao Studio.</p></td><td width="33%" valign="top"><h3>🌐 FlowDetect para Chrome</h3><p><b>Automatize páginas web.</b> Extensão com pareamento por código, reconhecimento de elementos e execução na aba do navegador.</p></td></tr></table>
+<table><tr><td width="33%" valign="top"><h3>🧩 itsflow Studio</h3><p><b>Crie e acompanhe.</b> Editor visual de blocos, sequências, loops, assistente Sync e testes assistidos.</p></td><td width="33%" valign="top"><h3>🖥️ Agent Windows</h3><p><b>Execute remotamente.</b> Agente Windows para receber automações e enviar andamento ao Studio.</p></td><td width="33%" valign="top"><h3>🌐 itsflow para Chrome</h3><p><b>Automatize páginas web.</b> Extensão com pareamento por código, reconhecimento de elementos e execução na aba do navegador.</p></td></tr></table>
 
 ## Recursos em destaque
 | Criação e controle | Reconhecimento e dados | Execução e resultados |
 |---|---|---|
 | Editor visual em blocos | OCR e reconhecimento por imagem | Testes assistidos |
 | Loops, rotas e condições | Captura de elementos no Chrome | Execução via Agent remoto |
-| Gravador inteligente | Leitura e escrita em planilhas | Relatórios PDF e exportação |
+| Assistente Sync por demonstração | Leitura e escrita em planilhas | Relatórios PDF e exportação |
 | Janela alvo | Tratamento de downloads | Acompanhamento de progresso |
 
-## Atualização em desenvolvimento
+## Atualização itsflow Studio
 
-Chat IA com histórico de conversas, criação guiada de blocos reais e tutorial visual com halo nos controles. Inclui variáveis OCR, percursos de tabelas no Chrome e captura nativa do Agent. [Confira as mudanças, os dez commits e a validação](docs/ATUALIZACAO_CHAT_GUIADO_2026-11-11.md).
+- **Inicial com Sync:** chat universal para pedir, perguntar e criar blocos reais, com histórico de conversas e mapa ao lado.
+- **Demonstre no desktop:** notch com esfera animada, aura nas bordas e seleção de regiões sem clicar no programa.
+- **Uma etapa por vez:** escolha 1 clique, 2 cliques, reconhecer, validar ou preencher; explique a finalidade e ajuste imagem/OCR antes de enviar ao mapa.
+- **Continue sem reiniciar:** após salvar, o Sync recolhe e prepara a próxima captura. A aura continua visível durante o recorte, com indicação de captura no notch.
+- **Nova apresentação:** identidade azul-escuro/ciano, abertura com logotipo, transições suaves entre abas e respostas progressivas.
+
+[Detalhes e verificações](docs/ATUALIZACAO_ITSFLOW_2026-11-23.md) · [Assistente desktop](docs/ASSISTENTE_DESKTOP.md) · [Demonstração Chrome](docs/CHROME_DEMONSTRACAO.md)
+
+> itsflow Studio é o novo nome do FlowDetect. Os identificadores internos e caminhos de dados continuam compatíveis. Esta branch atualiza o código; os instaladores das releases existentes continuam sendo as versões já publicadas.
 
 ## Galeria
 > Imagens oficiais de releases anteriores. A interface atual pode apresentar alterações.
@@ -43,17 +51,17 @@ Chat IA com histórico de conversas, criação guiada de blocos reais e tutorial
 <p align="center"><img src="docs/readme-media/OCR-Visual-2.0.1.png" width="48%" alt="OCR visual"> <img src="docs/readme-media/OCR-multiplos-textos-2.0.1.png" width="48%" alt="OCR de múltiplos textos"></p>
 
 ### Extensão do Chrome
-<p align="center"><img src="docs/readme-media/FlowDetect-para-Chrome-2.0.1.png" width="80%" alt="Extensão FlowDetect para Chrome"></p>
+<p align="center"><img src="docs/readme-media/FlowDetect-para-Chrome-2.0.1.png" width="80%" alt="Extensão itsflow para Chrome"></p>
 
 ## Downloads
 **As releases oficiais estão neste repositório.**
 
 | Componente | Plataforma | Onde baixar |
 |---|---|---|
-| **FlowDetect Studio** — instalador NSIS | Windows | [Última release](https://github.com/kaua-ananiass/FlowDetect/releases/latest) |
-| **FlowDetect Agent** — instalador | Windows | [Última release](https://github.com/kaua-ananiass/FlowDetect/releases/latest) |
-| **FlowDetect para Chrome** — pacote ZIP | Chrome | [Última release](https://github.com/kaua-ananiass/FlowDetect/releases/latest) |
-| **Studio DMG experimental** | Mac com Apple Silicon | [Artefatos do GitHub Actions](https://github.com/kaua-ananiass/FlowDetect/actions/workflows/macos-arm64-dmg.yml) |
+| **itsflow Studio** — instalador NSIS | Windows | [Última release](https://github.com/kaua-ananiass/ItsFlow-studio/releases/latest) |
+| **Agent Windows** — instalador | Windows | [Última release](https://github.com/kaua-ananiass/ItsFlow-studio/releases/latest) |
+| **itsflow para Chrome** — pacote ZIP | Chrome | [Última release](https://github.com/kaua-ananiass/ItsFlow-studio/releases/latest) |
+| **Studio DMG experimental** | Mac com Apple Silicon | [Artefatos do GitHub Actions](https://github.com/kaua-ananiass/ItsFlow-studio/actions/workflows/macos-arm64-dmg.yml) |
 
 > O DMG de macOS ainda é experimental: a instalação e funcionalidades precisam ser testadas em Mac real, e assinatura/notarização estão pendentes.
 
@@ -116,7 +124,7 @@ npm test
 
 ---
 
-<div align="center"><strong>FlowDetect</strong> — do mapa visual à execução acompanhada.<p><a href="https://github.com/kaua-ananiass/FlowDetect/releases/latest">Baixar versão estável</a> · <a href="https://github.com/kaua-ananiass/FlowDetect/releases">Histórico de versões</a></p></div>
+<div align="center"><strong>FlowDetect</strong> — do mapa visual à execução acompanhada.<p><a href="https://github.com/kaua-ananiass/ItsFlow-studio/releases/latest">Baixar versão estável</a> · <a href="https://github.com/kaua-ananiass/ItsFlow-studio/releases">Histórico de versões</a></p></div>
 
 <details><summary><b>Documentação técnica detalhada e recursos anteriores</b></summary>
 
