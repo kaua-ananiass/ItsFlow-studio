@@ -76,6 +76,8 @@ ARQUIVOS_RUNTIME_ATUALIZACAO = [
     "executar_automacao.bat",
     "gerenciar_roteiro.py",
     "chatgpt_guided.py",
+    "chrome_demonstration.py",
+    "desktop_assistant.py",
     "block_knowledge.json",
     "gerenciar_dados_planilha.py",
     "capturar_imagem_tela.py",
@@ -3516,8 +3518,18 @@ def preparar_proposta_chatgpt(payload, draft):
 
 
 def comando_caminhos_mapa(args):
-    pedido = json.loads(args.request)
+    if getattr(args,'request_file',None):
+        request_path=Path(args.request_file)
+        if request_path.stat().st_size>4*1024*1024:raise ValueError('Pedido de mapa muito grande.')
+        pedido=json.loads(request_path.read_text(encoding='utf-8'))
+    else:
+        pedido = json.loads(args.request)
     payload = carregar_e_normalizar()
+    if pedido.get('action')=='demonstration_import':
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('chrome_demonstration',Path(__file__).resolve().with_name('chrome_demonstration.py'))
+        chrome_demonstration=importlib.util.module_from_spec(spec);spec.loader.exec_module(chrome_demonstration)
+        return chrome_demonstration.import_demo(sys.modules[__name__],payload,pedido)
     acao = pedido.get("action")
     if acao in {"ai_guide_context", "ai_guide_validate", "ai_guide_create", "ai_guide_update", "ai_assist_apply", "ai_assist_undo"}:
         # The embedded Windows runtime deliberately omits the script directory
@@ -5068,7 +5080,9 @@ def build_parser():
     open_automation = subparsers.add_parser("automation-open")
     open_automation.add_argument("--id", required=True)
     map_paths = subparsers.add_parser("map-paths")
-    map_paths.add_argument("--request", required=True)
+    map_requests=map_paths.add_mutually_exclusive_group(required=True)
+    map_requests.add_argument("--request")
+    map_requests.add_argument("--request-file")
     preview_automation = subparsers.add_parser("automation-preview")
     preview_automation.add_argument("--id", required=True)
 

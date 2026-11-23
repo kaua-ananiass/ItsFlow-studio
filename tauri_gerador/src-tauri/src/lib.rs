@@ -10,6 +10,7 @@ mod native_capture;
 mod remote_input;
 mod chatgpt;
 mod chat_history;
+mod desktop_assistant;
 #[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
@@ -63,6 +64,8 @@ const BUNDLED_MARCADOR_VISUAL: &[u8] = include_bytes!("../../../marcador_visual.
 const BUNDLED_GERENCIAR_DADOS_PLANILHA: &[u8] = include_bytes!("../../../gerenciar_dados_planilha.py");
 const BUNDLED_GERENCIAR_ROTEIRO: &[u8] = include_bytes!("../../../gerenciar_roteiro.py");
 const BUNDLED_CHATGPT_GUIDED: &[u8] = include_bytes!("../../../chatgpt_guided.py");
+const BUNDLED_CHROME_DEMONSTRATION: &[u8] = include_bytes!("../../../chrome_demonstration.py");
+const BUNDLED_DESKTOP_ASSISTANT: &[u8] = include_bytes!("../../../desktop_assistant.py");
 const BUNDLED_GOOGLE_WORKSPACE: &[u8] = include_bytes!("../../../google_workspace.py");
 const BUNDLED_BLOCK_KNOWLEDGE: &[u8] = include_bytes!("../../../block_knowledge.json");
 const BUNDLED_LISTAR_JANELAS_ABERTAS: &[u8] = include_bytes!("../../../listar_janelas_abertas.py");
@@ -136,7 +139,6 @@ static PYTHON_DEPS_READY: AtomicBool = AtomicBool::new(false);
 static OCR_VARIABLE_TEST_BUSY: AtomicBool = AtomicBool::new(false);
 
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
-static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static RECOGNITION_WORKER: Mutex<Option<RecognitionWorker>> = Mutex::new(None);
 static EMBEDDED_HYPERV_CONSOLE: Mutex<Option<EmbeddedHypervConsole>> = Mutex::new(None);
 static AGENT_WORK_AREA_GUARD_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -1514,7 +1516,7 @@ fn local_python_candidates(root: &Path) -> Vec<PathBuf> {
     }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         let base = PathBuf::from(local_app_data);
-        for product in ["FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
+        for product in ["itsflow Agent", "itsflow Studio", "FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
             local_candidates.push(
                 base.join("Programs")
                     .join(product)
@@ -1609,7 +1611,7 @@ fn python_installer_candidates(root: &Path) -> Vec<PathBuf> {
     }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         let base = PathBuf::from(local_app_data);
-        for product in ["FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
+        for product in ["itsflow Agent", "itsflow Studio", "FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
             candidates.push(
                 base.join("Programs")
                     .join(product)
@@ -1658,7 +1660,7 @@ fn python_wheels_candidates(root: &Path) -> Vec<PathBuf> {
     }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         let base = PathBuf::from(local_app_data);
-        for product in ["FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
+        for product in ["itsflow Agent", "itsflow Studio", "FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
             candidates.push(
                 base.join("Programs")
                     .join(product)
@@ -2001,6 +2003,8 @@ fn bundled_python_script_bytes(script_name: &str) -> Option<&'static [u8]> {
         "gerenciar_dados_planilha.py" => Some(BUNDLED_GERENCIAR_DADOS_PLANILHA),
         "gerenciar_roteiro.py" => Some(BUNDLED_GERENCIAR_ROTEIRO),
         "chatgpt_guided.py" => Some(BUNDLED_CHATGPT_GUIDED),
+        "chrome_demonstration.py" => Some(BUNDLED_CHROME_DEMONSTRATION),
+        "desktop_assistant.py" => Some(BUNDLED_DESKTOP_ASSISTANT),
         "google_workspace.py" => Some(BUNDLED_GOOGLE_WORKSPACE),
         "block_knowledge.json" => Some(BUNDLED_BLOCK_KNOWLEDGE),
         "listar_janelas_abertas.py" => Some(BUNDLED_LISTAR_JANELAS_ABERTAS),
@@ -2126,6 +2130,7 @@ fn run_python_script(
 
 fn run_helper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
     ensure_python_script_integrity(root, "chatgpt_guided.py")?;
+    ensure_python_script_integrity(root, "chrome_demonstration.py")?;
     ensure_python_script_integrity(root, "block_knowledge.json")?;
     let raw = run_python_script(root, "gerenciar_roteiro.py", args)?;
     serde_json::from_str(&raw)
@@ -2603,7 +2608,16 @@ async fn map_paths_action(app: AppHandle, request: Value) -> Result<Value, Strin
         if get_remote_agent_snapshot(&root)["snapshot"]["running"]==true {
             return Err("Pare a execucao antes de modificar os caminhos.".into());
         }
-        run_helper_json(&root,&["map-paths".into(),"--request".into(),request.to_string()])
+        if request["action"]=="demonstration_import" {
+            let encoded=serde_json::to_vec(&request).map_err(|error|error.to_string())?;
+            if encoded.len()>4*1024*1024{return Err("Demonstração grande demais. Divida em trechos menores.".into());}
+            let stamp=SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let path=std::env::temp_dir().join(format!("itsflow-demonstration-{}-{stamp}.json",std::process::id()));
+            let mut file=fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|error|error.to_string())?;
+            if let Err(error)=file.write_all(&encoded){drop(file);let _=fs::remove_file(&path);return Err(error.to_string());}drop(file);
+            let result=run_helper_json(&root,&["map-paths".into(),"--request-file".into(),path.to_string_lossy().to_string()]);
+            let _=fs::remove_file(&path);result
+        }else{run_helper_json(&root,&["map-paths".into(),"--request".into(),request.to_string()])}
     }).await.map_err(|error|error.to_string())?
 }
 
@@ -2616,7 +2630,7 @@ async fn chatgpt_action(app: AppHandle, mut request: Value) -> Result<Value, Str
     tauri::async_runtime::spawn_blocking(move || {
         let generate=request["action"]=="generate";
         let chat=request["action"]=="chat";
-        let guide=request["action"]=="guide";
+        let guide=request["action"]=="guide" || request["action"]=="universal";
 
         if matches!(request["action"].as_str(),Some("history_load"|"history_save")){return chat_history::action(&dir,request);}
         let request_id=request["request_id"].as_str().unwrap_or("").chars().take(100).collect::<String>();
@@ -2636,6 +2650,7 @@ async fn chatgpt_action(app: AppHandle, mut request: Value) -> Result<Value, Str
             request["context"]["active_editor"]=selected.unwrap_or(Value::Null);
             request["context"]["assistant_mode"]=serde_json::json!(request["assistant_mode"]==true);
             request["context"]["workspace"]=serde_json::json!(if request["editor_context"]["workspace"]=="map-and-chat"{"map-and-chat"}else{"studio"});
+            if request["action"]=="chat" && request["demonstration"].is_array(){request["context"]["demonstration"]=request["demonstration"].clone();request["context"]["demonstration_source"]=request["demonstration_source"].clone();}
         }
         let result=chatgpt::action_with_stream(&dir,request,|delta|{if chat {let _=stream_app.emit("chatgpt-text-delta",serde_json::json!({"request_id":request_id,"delta":delta}));}})?;
         if guide {
@@ -2647,6 +2662,33 @@ async fn chatgpt_action(app: AppHandle, mut request: Value) -> Result<Value, Str
         }
         Ok(result)
     }).await.map_err(|_|"A operação ChatGPT foi interrompida.".to_string())?
+}
+
+fn chrome_demonstration_request(app:&AppHandle,request:Value)->Result<Value,String>{
+    let root=workspace_root(app);
+    let library=run_helper_json(&root,&["automation-library-list".into()])?;
+    let active=library["active_id"].as_str().unwrap_or("");
+    let operation=request["operation"].as_str().unwrap_or("");
+    if operation=="status"{
+        let context=run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"ai_context"}).to_string()])?;
+        let item=library["items"].as_array().and_then(|items|items.iter().find(|item|item["id"].as_str()==Some(active)));
+        return Ok(serde_json::json!({"automation":{"id":active,"name":item.map(|item|item["nome"].clone()).unwrap_or(serde_json::json!("Automação atual"))},"revision":context["revision"]}));
+    }
+    if active.is_empty()||request["automation_id"].as_str()!=Some(active){return Err("Reabra no Studio a automação vinculada à demonstração.".into());}
+    match operation{
+        "import"=>{
+            let result=tauri::async_runtime::block_on(map_paths_action(app.clone(),serde_json::json!({"action":"demonstration_import","engine":request["engine"],"automation_id":active,"events":request["events"],"session_id":request["session_id"],"revision":request["revision"]})))?;
+            let _=app.emit("itsflow-demonstration-imported",serde_json::json!({"automation_id":active}));Ok(result)
+        },
+        "chat"=>{
+            let events=request["events"].as_array().filter(|events|events.len()<=50).ok_or("Demonstração muito extensa.")?;
+            let summary:Vec<Value>=events.iter().map(|event|serde_json::json!({"id":event["id"].as_str().unwrap_or("").chars().take(80).collect::<String>(),"kind":event["kind"].as_str().unwrap_or("").chars().take(20).collect::<String>(),"source":event["source"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"builder_stage":event["builder_stage"].as_u64().filter(|v|*v<=3).unwrap_or(0),"recognition":event["recognition"].as_str().filter(|v|*v=="image"||*v=="ocr").unwrap_or("image"),"clicks":event["clicks"].as_u64().filter(|v|*v==1||*v==2).unwrap_or(1),"on_success":event["on_success"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"on_failure":event["on_failure"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"label":event["label"].as_str().unwrap_or("").chars().take(100).collect::<String>(),"resulting_page":event["resulting_page"].as_str().unwrap_or("").chars().take(300).collect::<String>(),"description":event["description"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),"text":event["text"].as_str().unwrap_or("").chars().take(500).collect::<String>(),"page":event["url"].as_str().unwrap_or("").chars().take(300).collect::<String>()})).collect();
+            let models=tauri::async_runtime::block_on(chatgpt_action(app.clone(),serde_json::json!({"action":"models"})))?;
+            let model=models["models"].as_array().and_then(|items|items.iter().find(|model|model["visibility"]=="list"&&model["slug"].is_string())).and_then(|model|model["slug"].as_str()).ok_or("Conecte a conta ChatGPT no Studio para conversar pela extensão.")?;
+            tauri::async_runtime::block_on(chatgpt_action(app.clone(),serde_json::json!({"action":"chat","automation_id":active,"model":model,"prompt":request["prompt"],"history":request["history"],"image":request["image"],"demonstration_source":request["engine"],"demonstration":summary})))
+        },
+        _=>Err("Operação do assistente Chrome não permitida.".into())
+    }
 }
 
 #[tauri::command]
@@ -3045,7 +3087,7 @@ fn agent_pairing_renew(app: AppHandle) -> Result<Value, String> {
 }
 #[tauri::command]
 async fn remote_agent_pair_by_code(code: String, address: Option<String>) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || agent_pairing::discover_and_pair(&code, "FlowDetect Studio",address.as_deref()))
+    tauri::async_runtime::spawn_blocking(move || agent_pairing::discover_and_pair(&code, "itsflow Studio",address.as_deref()))
         .await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
@@ -6296,296 +6338,6 @@ fn append_compare_diverge_args(
         args.push("--atraso-sequencia-divergir".into());
         args.push(value.max(0.0).to_string());
     }
-}
-
-fn smart_recorder_dir(root: &Path) -> PathBuf {
-    root.join(".flowdetect_recorder")
-}
-
-fn smart_recorder_events_path(root: &Path) -> PathBuf {
-    smart_recorder_dir(root).join("eventos.jsonl")
-}
-
-fn smart_recorder_stop_path(root: &Path) -> PathBuf {
-    smart_recorder_dir(root).join("parar.flag")
-}
-
-fn read_smart_recorder_events(path: &Path) -> Vec<Value> {
-    let Ok(content) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    content
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .collect()
-}
-
-fn write_smart_recorder_events(path: &Path, events: &[Value]) -> Result<(), String> {
-    let mut content = String::new();
-    for event in events {
-        content.push_str(
-            &serde_json::to_string(event)
-                .map_err(|err| format!("Falha ao serializar evento: {err}"))?,
-        );
-        content.push('\n');
-    }
-    fs::write(path, content).map_err(|err| format!("Falha ao atualizar eventos do gravador: {err}"))
-}
-
-#[tauri::command]
-fn start_smart_recorder(app: AppHandle) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let script_path = root.join("gravador_inteligente.py");
-    if !script_path.exists() {
-        return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
-    }
-
-    {
-        let mut guard = SMART_RECORDER_CHILD
-            .lock()
-            .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
-        if let Some(child) = guard.as_mut() {
-            if child
-                .try_wait()
-                .map_err(|err| format!("Falha ao verificar gravador: {err}"))?
-                .is_none()
-            {
-                return Err("O Gravador inteligente ja esta em execucao.".to_string());
-            }
-        }
-        *guard = None;
-    }
-
-    let recorder_dir = smart_recorder_dir(&root);
-    let images_dir = root.join("Imagens").join("gravador");
-    fs::create_dir_all(&recorder_dir)
-        .map_err(|err| format!("Falha ao preparar gravador: {err}"))?;
-    fs::create_dir_all(&images_dir)
-        .map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
-    let events_path = smart_recorder_events_path(&root);
-    let stop_path = smart_recorder_stop_path(&root);
-    let _ = fs::remove_file(&events_path);
-    let _ = fs::remove_file(&stop_path);
-
-    let (python_program, python_args) = python_command(&root)?;
-    let mut command = Command::new(&python_program);
-    command
-        .current_dir(&root)
-        .args(&python_args)
-        .arg(&script_path)
-        .arg("--output")
-        .arg(&events_path)
-        .arg("--images-dir")
-        .arg(&images_dir)
-        .arg("--stop-flag")
-        .arg(&stop_path);
-    configure_no_window(&mut command);
-    let child = command
-        .spawn()
-        .map_err(|err| format!("Falha ao iniciar o Gravador inteligente: {err}"))?;
-
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.minimize();
-    }
-
-    let mut guard = SMART_RECORDER_CHILD
-        .lock()
-        .map_err(|_| "Falha ao salvar estado do gravador.".to_string())?;
-    *guard = Some(child);
-    Ok(serde_json::json!({
-        "running": true,
-        "events": [],
-        "message": "Gravador iniciado. Use ESC para finalizar."
-    }))
-}
-
-#[tauri::command]
-fn stop_smart_recorder(app: AppHandle) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    fs::create_dir_all(smart_recorder_dir(&root))
-        .map_err(|err| format!("Falha ao parar gravador: {err}"))?;
-    fs::write(smart_recorder_stop_path(&root), "stop")
-        .map_err(|err| format!("Falha ao sinalizar parada: {err}"))?;
-    thread::sleep(Duration::from_millis(250));
-    {
-        let mut guard = SMART_RECORDER_CHILD
-            .lock()
-            .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
-        if let Some(child) = guard.as_mut() {
-            if child.try_wait().ok().flatten().is_none() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-        }
-        *guard = None;
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-    get_smart_recorder_status(app)
-}
-
-#[tauri::command]
-fn get_smart_recorder_status(app: AppHandle) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let mut finished_now = false;
-    let running = {
-        let mut guard = SMART_RECORDER_CHILD
-            .lock()
-            .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
-        if let Some(child) = guard.as_mut() {
-            if child
-                .try_wait()
-                .map_err(|err| format!("Falha ao verificar gravador: {err}"))?
-                .is_some()
-            {
-                *guard = None;
-                finished_now = true;
-                false
-            } else {
-                true
-            }
-        } else {
-            false
-        }
-    };
-    if finished_now {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    }
-    Ok(serde_json::json!({
-        "running": running,
-        "events": read_smart_recorder_events(&smart_recorder_events_path(&root)),
-    }))
-}
-
-#[tauri::command]
-fn update_smart_recorder_click_area(
-    app: AppHandle,
-    event_id: i32,
-    width: i32,
-    height: i32,
-    clicks: i32,
-    click_action: Option<String>,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let events_path = smart_recorder_events_path(&root);
-    let mut events = read_smart_recorder_events(&events_path);
-    let index = events
-        .iter()
-        .position(|event| {
-            event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id)
-        })
-        .ok_or_else(|| "Evento do clique nao encontrado.".to_string())?;
-    let event_json = serde_json::to_string(&events[index])
-        .map_err(|err| format!("Falha ao preparar evento do clique: {err}"))?;
-    let script_path = root.join("gravador_inteligente.py");
-    if !script_path.exists() {
-        return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
-    }
-    let images_dir = root.join("Imagens").join("gravador");
-    fs::create_dir_all(&images_dir)
-        .map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
-    let mut args = vec![
-        "--recrop".into(),
-        "--event-json".into(),
-        event_json,
-        "--output".into(),
-        events_path.display().to_string(),
-        "--images-dir".into(),
-        images_dir.display().to_string(),
-        "--stop-flag".into(),
-        smart_recorder_stop_path(&root).display().to_string(),
-        "--crop-width".into(),
-        width.max(40).to_string(),
-        "--crop-height".into(),
-        height.max(40).to_string(),
-        "--clicks".into(),
-        clicks.max(1).min(2).to_string(),
-    ];
-    if let Some(value) = click_action {
-        args.push("--click-action".into());
-        args.push(value);
-    }
-    let updated = run_script_json(&root, "gravador_inteligente.py", &args)?;
-    events[index] = updated.clone();
-    write_smart_recorder_events(&events_path, &events)?;
-    Ok(serde_json::json!({
-        "event": updated,
-        "events": events,
-    }))
-}
-
-#[tauri::command]
-fn delete_smart_recorder_event(app: AppHandle, event_id: i32) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let events_path = smart_recorder_events_path(&root);
-    let mut events = read_smart_recorder_events(&events_path);
-    let removed = events
-        .iter()
-        .position(|event| {
-            event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id)
-        })
-        .map(|index| events.remove(index))
-        .ok_or_else(|| "Bloco gravado nao encontrado.".to_string())?;
-
-    if let Some(image_id) = removed.get("image_id").and_then(Value::as_str) {
-        let normalized = image_id.replace('\\', "/");
-        if normalized.starts_with("imagens/gravador/") {
-            let file_name = Path::new(&normalized)
-                .file_name()
-                .ok_or_else(|| "Nome da imagem do gravador invalido.".to_string())?;
-            let image_path = root.join("Imagens").join("gravador").join(file_name);
-            let _ = fs::remove_file(image_path);
-        }
-    }
-
-    write_smart_recorder_events(&events_path, &events)?;
-    Ok(serde_json::json!({
-        "events": events,
-    }))
-}
-
-#[tauri::command]
-fn clear_smart_recorder_events(app: AppHandle) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let events_path = smart_recorder_events_path(&root);
-    if events_path.exists() {
-        fs::write(&events_path, "")
-            .map_err(|err| format!("Falha ao limpar blocos do gravador: {err}"))?;
-    }
-    Ok(serde_json::json!({
-        "events": [],
-    }))
-}
-
-#[tauri::command]
-fn update_smart_recorder_event_delay(
-    app: AppHandle,
-    event_id: i32,
-    delay: f64,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let events_path = smart_recorder_events_path(&root);
-    let mut events = read_smart_recorder_events(&events_path);
-    let index = events
-        .iter()
-        .position(|event| {
-            event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id)
-        })
-        .ok_or_else(|| "Bloco gravado nao encontrado.".to_string())?;
-    events[index]["delay"] = serde_json::json!(delay.max(0.0));
-    let updated = events[index].clone();
-    write_smart_recorder_events(&events_path, &events)?;
-    Ok(serde_json::json!({
-        "event": updated,
-        "events": events,
-    }))
 }
 
 #[tauri::command]
@@ -10564,6 +10316,8 @@ pub fn run() {
             ) {
                 eprintln!("{error}");
             }
+            let assistant_app=app_handle.clone();
+            chrome_test_bridge::configure_assistant(Arc::new(move |request| chrome_demonstration_request(&assistant_app,request)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -10640,13 +10394,8 @@ pub fn run() {
             capture_image_asset,
             open_images_folder,
             open_recognition_diagnostics_folder,
-            start_smart_recorder,
-            stop_smart_recorder,
-            get_smart_recorder_status,
-            update_smart_recorder_click_area,
-            delete_smart_recorder_event,
-            clear_smart_recorder_events,
-            update_smart_recorder_event_delay,
+            desktop_assistant::start_desktop_assistant,
+            desktop_assistant::desktop_assistant_action,
             add_text_block,
             add_key_block,
             add_loop_start_block,

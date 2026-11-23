@@ -150,6 +150,7 @@ def gerar_nome_automatico_imagem(pasta_imagens: Path, nome_base: str = "imagem_c
 def selecionar_area_da_tela(
     imagem_base,
     limites_tela_virtual: tuple[int, int, int, int],
+    on_ready=None,
 ) -> Optional[AreaSelecionada]:
     """
     Abre uma camada transparente sobre a tela para o usuario selecionar a regiao.
@@ -321,6 +322,8 @@ def selecionar_area_da_tela(
     area_desenho.bind("<ButtonRelease-1>", concluir_selecao)
     area_desenho.bind("<ButtonPress-3>", cancelar_captura)
     janela.bind("<Escape>", cancelar_captura)
+    if on_ready is not None:
+        janela.after_idle(on_ready)
     janela.mainloop()
     return resultado["area"]
 
