@@ -1930,7 +1930,7 @@ body.run-focused .automation-flip-item { display: none !important; }
 .app-shell { gap: 6px; padding: 8px; }
 .workspace-tabs {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr) minmax(0, 1fr);
   gap: 5px;
   min-width: 0;
   flex: 0 0 auto;
@@ -2587,7 +2587,7 @@ body:not(.run-focused) .automation-flip-detail > .automation-card-top {
   font-size: 9px;
 }
 .assisted-content > .assisted-execution {
-  grid-template-rows: auto minmax(0, 1fr) 86px;
+  grid-template-rows: auto minmax(0, 1fr) 64px;
   gap: 6px;
   padding: 9px;
 }

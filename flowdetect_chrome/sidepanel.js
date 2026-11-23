@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.96";
+const REQUIRED_RUNTIME_VERSION = "0.2.101";
 const PAGES_KEY = "flowdetectChromeExecutionPages";
 const PAGE_RUN_PREFIX = "flowdetectChromePageRun:";
 let executionPages = [];
@@ -1977,3 +1977,18 @@ Promise.all([getAutomations(), chrome.storage.session.get("flowdetectSelectedPag
     setWorkspaceView(storedWorkspace?.flowdetectWorkspaceView || "automations", false);
     selectExecutionPage(selected?.id || null);
   }).catch(pageFeedback);
+
+// Resolve the window before the click so sidePanel.open keeps Chrome's user gesture.
+const demonstrationButton = document.querySelector("#openDemonstration");
+if (demonstrationButton) demonstrationButton.disabled = true;
+if (demonstrationButton && chrome.windows?.getCurrent && chrome.sidePanel?.open) {
+  chrome.windows.getCurrent().then(current => {
+    demonstrationButton.disabled = false;
+    demonstrationButton.addEventListener("click", () => {
+      chrome.sidePanel.open({windowId: current.id}).then(() => self.close()).catch(error => {
+        mapElementStatus.hidden = false;
+        mapElementStatus.textContent = String(error.message || error);
+      });
+    });
+  }).catch(error => console.warn("Janela do assistente indisponível", error));
+}

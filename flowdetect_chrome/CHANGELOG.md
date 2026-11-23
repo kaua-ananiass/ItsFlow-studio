@@ -1,5 +1,43 @@
 # Histórico de versões
 
+## 0.2.101 — 23/11/2026
+
+- Capturas agora são anexadas como imagem à análise automática, além do texto extraído da região.
+- Botão Analisar imagem no rascunho para repetir uma análise sem recapturar a mensagem.
+- Detecção de navegação durante a pausa de explicação, preservando o destino do clique anterior.
+- Detecção de rotas SPA por histórico e hash, com proteção contra registros duplicados.
+
+## 0.2.100 — 23/11/2026
+
+- Demonstração de uma etapa por vez, com pausa imediata após clicar ou recortar uma mensagem.
+- Análise automática da etapa e pergunta sobre a finalidade, com explicação salva no rascunho.
+- Botão Gravar próxima etapa para continuar explicitamente, preservando todas as etapas anteriores.
+- Brilho do ponto capturado até a borda da página e animação de recebimento no chat, com redução de movimento respeitada.
+
+## 0.2.99 — 23/11/2026
+
+- **Capturar mensagem** permite recortar uma área da página para etapas de análise sem clique.
+- Seleção com moldura, cancelamento por Escape e miniatura no rascunho, sem ativar controles sob o recorte.
+- Texto esperado revisável: importa reconhecimento de texto ou da imagem, sempre com o clique desativado.
+- Imagens locais, recorte corrigido pela escala da tela e transporte ao Studio sem o limite de argumentos do Windows.
+
+## 0.2.98 — 23/11/2026
+
+- Conversa com rolagem própria e rascunho recolhível fixo junto ao campo de mensagem.
+- Confirmação animada de clique salvo na página e no rodapé do painel.
+- Cursor Assistente e contorno de campo baseados nos alvos reais da demonstração, com indicação automática na resposta e opção Mostrar.
+- Destaques sem clique, com acompanhamento do alvo, duração limitada, Escape e respeito à redução de movimento.
+- Alvos de outras páginas, sensíveis ou ambíguos são recusados; seletores não são fornecidos pela IA.
+
+## 0.2.97 — 23/11/2026
+
+- Assistente lateral em **Criar com IA**, usando a conta ChatGPT do Studio.
+- Captura explícita de navegação, cliques e campos da aba escolhida, sem ler o texto digitado.
+- Rascunho revisável com textos e variáveis, importado como seção Chrome editável sem executar o fluxo.
+- Esfera de pensamento compartilhada com o Studio, conclusão verde e resposta com animação progressiva.
+- Ponte local autenticada, verificação da automação de destino e proteção contra importação duplicada.
+
+
 ## 0.2.96 — pacote da release FlowDetect 4.0.0
 
 - Versões da extensão e da ponte local alinhadas para o Studio 4.0.0.

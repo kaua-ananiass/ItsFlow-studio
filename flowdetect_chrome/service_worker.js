@@ -2,6 +2,7 @@ import { routeAvailable, activateDownloadRoute, deactivateDownloadRoute, clearDo
   from "./download-routing.js";
 import { PAGE_RUN_PREFIX, PAGES_KEY, getPages, createPage, bindPage, unbindPage, deletePage, editPages } from "./execution-pages.js";
 import { tableWorkbookDataUrl } from "./table-workbook.js";
+import {installDemonstration} from './demonstration.js';
 async function updatePageOutline(tabId, page) {
   if (!Number.isInteger(tabId)) return;
   const update = { type: "flowdetect-page-outline-update", page: page || null };
@@ -16,8 +17,8 @@ async function updatePageOutline(tabId, page) {
 }
 
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.96";
-const CONTENT_RUNTIME_VERSION = "0.2.96";
+const RUNTIME_VERSION = "0.2.101";
+const CONTENT_RUNTIME_VERSION = "0.2.101";
 const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const PAIR_CODE_KEY = "flowdetectStudioPairCode";
@@ -58,6 +59,11 @@ let chainReservation = "";
 const reservedTabs = new Set();
 const reservedPages = new Set();
 const imageBitmapCache = new Map();
+installDemonstration({tabBusy:tabId=>reservedTabs.has(tabId)||[...activeRuns.values()].some(run=>run.tabId===tabId),bridge:async payload=>{
+ const body=JSON.stringify(payload);if(new TextEncoder().encode(body).length>4*1024*1024)throw Error('Demonstração extensa. Divida em trechos menores.');
+ const response=await fetch(`${STUDIO_TEST_BRIDGE}/assistant`,{method:'POST',headers:{'Content-Type':'application/json','X-FlowDetect-Version':RUNTIME_VERSION,'X-FlowDetect-Extension-ID':chrome.runtime.id,'X-FlowDetect-Pair-Code':await getPairCode()},body,signal:AbortSignal.timeout(240000)});
+ const result=await response.json();if(!response.ok||result.error)throw Error(result.error||'Studio indisponível.');return result;
+}});
 let creatingCaptureDocument = null;
 
 
@@ -1961,6 +1967,7 @@ async function handleMessage(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if(String(message?.type||'').startsWith('itsflow-demo-'))return;
   if (message?.target === "flowdetect-offscreen") return false;
   handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
   return true;
