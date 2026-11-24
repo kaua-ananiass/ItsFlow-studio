@@ -17,13 +17,16 @@ html[data-edge=left] .aura-enter .aura-trace,html[data-edge=right] .aura-enter .
 @keyframes aura-line-rise{0%{opacity:0}65%{opacity:1}100%{opacity:.6}}
 @keyframes aura-trace-x{0%{opacity:0;transform:scaleX(0)}12%{opacity:1}65%{opacity:.9;transform:scaleX(1)}100%{opacity:0;transform:scaleX(1)}}
 @keyframes aura-trace-y{0%{opacity:0;transform:scaleY(0)}12%{opacity:1}65%{opacity:.9;transform:scaleY(1)}100%{opacity:0;transform:scaleY(1)}}
+.aura-leave{transition:opacity .4s ease-out;opacity:0}
 @media(prefers-reduced-motion:reduce){.aura-enter *{animation:none!important}.aura-trace{display:none}.aura-base{opacity:.35}}
 </style></head><body aria-hidden="true"><div class="aura-base"></div><div class="aura-line"></div><div class="aura-trace aura-trace-one"></div><div class="aura-trace aura-trace-two"></div><script>
 document.documentElement.dataset.edge=window.itsflowAuraEdge||'top';
 window.startItsflowAura=(started=Date.now())=>{
+ document.body.classList.remove('aura-leave');
  document.body.classList.remove('aura-enter');
  document.documentElement.style.setProperty('--aura-elapsed',String(Math.max(0,Date.now()-started))+'ms');
  void document.body.offsetWidth;document.body.classList.add('aura-enter');
 };
+window.stopItsflowAura=()=>document.body.classList.add('aura-leave');
 window.startItsflowAura(window.itsflowAuraStarted||Date.now());
 </script></body></html>

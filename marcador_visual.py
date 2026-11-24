@@ -203,7 +203,97 @@ def _pixels_premultiplicados(imagem):
 
 _cursores_retidos = {}
 _servicos_cursor = {}
+_auras_analise = {}
 CURSOR_HOTSPOT = (10, 38)
+
+
+class _AuraAnalise:
+    """Small passive border windows; no full-screen bitmap or moving cursor."""
+    def __init__(self, transicao=False):
+        self.user32=ctypes.WinDLL('user32',use_last_error=True)
+        self.gdi32=ctypes.WinDLL('gdi32',use_last_error=True)
+        self.kernel32=ctypes.WinDLL('kernel32',use_last_error=True)
+        u,g,k=self.user32,self.gdi32,self.kernel32
+        u.DefWindowProcW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM];u.DefWindowProcW.restype=ctypes.c_ssize_t
+        u.RegisterClassW.argtypes=[ctypes.POINTER(_WindowClass)];u.RegisterClassW.restype=wintypes.ATOM
+        u.CreateWindowExW.argtypes=[wintypes.DWORD,wintypes.LPCWSTR,wintypes.LPCWSTR,wintypes.DWORD,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.HWND,wintypes.HMENU,wintypes.HINSTANCE,ctypes.c_void_p];u.CreateWindowExW.restype=wintypes.HWND
+        u.SetLayeredWindowAttributes.argtypes=[wintypes.HWND,wintypes.DWORD,wintypes.BYTE,wintypes.DWORD]
+        u.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
+        u.ShowWindow.argtypes=[wintypes.HWND,ctypes.c_int];u.DestroyWindow.argtypes=[wintypes.HWND]
+        u.UpdateWindow.argtypes=[wintypes.HWND]
+        u.PeekMessageW.argtypes=[ctypes.POINTER(wintypes.MSG),wintypes.HWND,wintypes.UINT,wintypes.UINT,wintypes.UINT]
+        u.TranslateMessage.argtypes=[ctypes.POINTER(wintypes.MSG)]
+        u.DispatchMessageW.argtypes=[ctypes.POINTER(wintypes.MSG)];u.DispatchMessageW.restype=ctypes.c_ssize_t
+        u.SetWindowDisplayAffinity.argtypes=[wintypes.HWND,wintypes.DWORD]
+        u.UnregisterClassW.argtypes=[wintypes.LPCWSTR,wintypes.HINSTANCE]
+        g.CreateSolidBrush.argtypes=[wintypes.DWORD];g.CreateSolidBrush.restype=wintypes.HBRUSH
+        g.DeleteObject.argtypes=[wintypes.HANDLE]
+        k.GetModuleHandleW.argtypes=[wintypes.LPCWSTR];k.GetModuleHandleW.restype=wintypes.HINSTANCE
+        self.brush=g.CreateSolidBrush(0x00D6C85B)
+        self.proc=_WNDPROC(lambda hwnd,msg,w,l:-1 if msg==0x0084 else u.DefWindowProcW(hwnd,msg,w,l))
+        self.instance=k.GetModuleHandleW(None);self.name=f'ItsflowSearchAura_{time.monotonic_ns()}'
+        self.cls=_WindowClass(0,self.proc,0,0,self.instance,None,None,self.brush,None,self.name)
+        self.windows=[];self.suspended=False;self.excluded=True;self.started=time.monotonic();self.last=0
+        self.analysis=not transicao;self.transition_started=self.started if transicao else None
+        if not u.RegisterClassW(ctypes.byref(self.cls)):raise OSError('Não foi possível criar a aura.')
+        left,top,width,height=(u.GetSystemMetrics(i) for i in (76,77,78,79))
+        try:
+            for thickness,alpha in ((10,25),(3,145)):
+                for x,y,w,h in ((left,top,width,thickness),(left,top+height-thickness,width,thickness),(left,top,thickness,height),(left+width-thickness,top,thickness,height)):
+                    hwnd=u.CreateWindowExW(0x00080000|0x00000008|0x00000020|0x00000080|0x08000000,self.name,'',0x80000000,x,y,w,h,None,None,self.instance,None)
+                    if not hwnd:raise OSError('Não foi possível abrir a aura.')
+                    self.windows.append((hwnd,alpha))
+                    u.SetLayeredWindowAttributes(hwnd,0,0 if transicao else alpha,2)
+                    self.excluded=bool(u.SetWindowDisplayAffinity(hwnd,0x11)) and self.excluded
+                    u.SetWindowPos(hwnd,wintypes.HWND(-1),x,y,w,h,0x0010|0x0040)
+                    u.UpdateWindow(hwnd)
+        except Exception:
+            self.close();raise
+    def update(self):
+        now=time.monotonic()
+        transitioning=self.transition_started is not None
+        if transitioning and now-self.transition_started>=1.15:
+            self.transition_started=None;transitioning=False
+        if not transitioning and not self.analysis:return False
+        if self.suspended or now-self.last<(.025 if transitioning else .08):return
+        self.last=now
+        if transitioning:
+            t=(now-self.transition_started)/1.15
+            wave=math.sin(math.pi*t)**2
+            base=.83*min(1,t*5) if self.analysis else 0
+            pulse=base+1.45*wave
+        else:pulse=.83+.17*math.sin((now-self.started)*math.pi/1.6)
+        for hwnd,alpha in self.windows:self.user32.SetLayeredWindowAttributes(hwnd,0,min(215,round(alpha*pulse)),2)
+        message=wintypes.MSG()
+        for _ in range(16):
+            if not self.user32.PeekMessageW(ctypes.byref(message),None,0,0,1):break
+            self.user32.TranslateMessage(ctypes.byref(message));self.user32.DispatchMessageW(ctypes.byref(message))
+    def suspend(self,active):
+        if self.excluded:return  # Keep the aura steady when Windows excludes it from capture.
+        self.suspended=active
+        for hwnd,_ in self.windows:self.user32.ShowWindow(hwnd,0 if active else 4)
+    def close(self):
+        for hwnd,_ in self.windows:self.user32.DestroyWindow(hwnd)
+        self.windows=[]
+        self.user32.UnregisterClassW(self.name,self.instance)
+        self.gdi32.DeleteObject(self.brush)
+
+
+def definir_analise_tela_windows(ativo=True):
+    if os.name!='nt':return False
+    identidade=threading.get_ident()
+    servico=_servicos_cursor.get(identidade)
+    if not servico and ativo:servico=_servicos_cursor.setdefault(identidade,_ServicoCursor())
+    if servico:return servico.chamar('aura',ativo=ativo)
+    return False
+
+
+def pulsar_retorno_desktop_windows():
+    if os.name!='nt':return False
+    identidade=threading.get_ident()
+    servico=_servicos_cursor.get(identidade)
+    if not servico:servico=_servicos_cursor.setdefault(identidade,_ServicoCursor())
+    return servico.chamar('transicao')
 
 
 class _ServicoCursor:
@@ -240,6 +330,10 @@ class _ServicoCursor:
                 try:
                     tipo = pedido['tipo']
                     if tipo == 'mover':
+                        aura=_auras_analise.get(threading.get_ident())
+                        if aura:
+                            aura.analysis=False
+                            if aura.transition_started is None:aura.close();_auras_analise.pop(threading.get_ident(),None)
                         origem = posicao_cursor_windows() or pedido['origem']
                         pedido['resultado'] = exibir_marcador_windows(
                             pedido['x'], pedido['y'], 190, 96, .26, pedido['etiqueta'],
@@ -248,6 +342,25 @@ class _ServicoCursor:
                         )
                     elif tipo == 'analise':
                         pedido['resultado'] = definir_analise_cursor_windows(pedido['ativo'])
+                    elif tipo == 'aura':
+                        identidade=threading.get_ident()
+                        aura=_auras_analise.get(identidade)
+                        if pedido['ativo']:
+                            if not aura:_auras_analise[identidade]=_AuraAnalise()
+                            else:aura.analysis=True
+                            estado=_cursores_retidos.get(identidade)
+                            if estado:
+                                estado['analisando']=False;estado['oculto_analise']=True
+                                estado['user32'].ShowWindow(estado['hwnd'],0)
+                        elif aura:
+                            aura.analysis=False
+                            if aura.transition_started is None:aura.close();_auras_analise.pop(identidade,None)
+                        pedido['resultado']=True
+                    elif tipo == 'transicao':
+                        identidade=threading.get_ident();aura=_auras_analise.get(identidade)
+                        if not aura:_auras_analise[identidade]=_AuraAnalise(transicao=True)
+                        else:aura.transition_started=time.monotonic()
+                        pedido['resultado']=True
                     elif tipo == 'suspender':
                         suspender_cursor_windows(pedido['ativo'])
                     elif tipo == 'posicao':
@@ -263,6 +376,8 @@ class _ServicoCursor:
         except Exception as erro:
             self.erro = erro
         finally:
+            aura=_auras_analise.pop(threading.get_ident(),None)
+            if aura:aura.close()
             fechar_cursor_windows()
 
 
@@ -308,19 +423,24 @@ def suspender_cursor_windows(suspenso=True):
     servico = _servicos_cursor.get(threading.get_ident())
     if servico:
         return servico.chamar('suspender', ativo=suspenso)
+    aura=_auras_analise.get(threading.get_ident())
+    if aura:aura.suspend(suspenso)
     estado = _cursores_retidos.get(threading.get_ident())
     if estado:
         estado['suspenso'] = suspenso
         if not suspenso and estado.get('analisando'):
             estado['origem_busca'] = estado['posicao']
             estado['inicio_busca'] = time.monotonic()
-        estado['user32'].ShowWindow(estado['hwnd'], 0 if suspenso else 4)
+        estado['user32'].ShowWindow(estado['hwnd'], 0 if suspenso or estado.get('oculto_analise') else 4)
 
 
 def atualizar_cursor_windows():
     """Processa mensagens da janela passiva durante as esperas do executor."""
     if threading.get_ident() in _servicos_cursor:
         return
+    aura=_auras_analise.get(threading.get_ident())
+    if aura and aura.update() is False:
+        aura.close();_auras_analise.pop(threading.get_ident(),None)
     estado = _cursores_retidos.get(threading.get_ident())
     if not estado:
         return

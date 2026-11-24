@@ -3840,6 +3840,7 @@ fn execute_remote_automation(
     let map_bridge_dir=root.join(".flowdetect_map_runs").join(now_millis().to_string());
     fs::create_dir_all(&map_bridge_dir).map_err(|e|e.to_string())?;
     command.env("FLOWDETECT_MAP_BRIDGE_DIR",&map_bridge_dir);
+    command.env("FLOWDETECT_EXECUTION_SURFACE","1");
     let mut child = command
         .spawn()
         .map_err(|err| format!("Falha ao iniciar automacao remota no Agent: {err}"))?;
@@ -3874,6 +3875,7 @@ fn execute_remote_automation(
             thread::spawn(move || {
                 let reader = BufReader::new(stdout_pipe);
                 for raw_line in reader.lines().flatten() {
+                    if desktop_assistant::execution_surface_line(&raw_line){continue;}
                     if !raw_line.trim().is_empty() {
                         append_launcher_log(&root, format!("REMOTE STDOUT: {raw_line}"));
                         update_remote_progress_from_stdout(&root, &automation_id, &raw_line);
@@ -3901,6 +3903,7 @@ fn execute_remote_automation(
         if let Some(handle) = stderr_thread {
             let _ = handle.join();
         }
+        desktop_assistant::execution_surface(false);
         append_launcher_log(
             &root_clone,
             format!("Processo remoto finalizado | sucesso={success}"),
@@ -5734,6 +5737,7 @@ fn spawn_test_process(
     configure_background_process(&mut command);
 
     let local_map_bridge=chrome_map_bridge::LocalMapBridge::attach(&root,&mut command)?;
+    command.env("FLOWDETECT_EXECUTION_SURFACE","1");
     let mut child = command
         .spawn()
         .map_err(|err| format!("Falha ao iniciar {error_context}: {err}"))?;
@@ -5776,6 +5780,7 @@ fn spawn_test_process(
                     let Ok(line) = raw_line else {
                         continue;
                     };
+                    if desktop_assistant::execution_surface_line(&line){continue;}
                     if let Some(payload) = parse_progress_line(&line) {
                         let _ = app.emit("test-progress", payload);
                     } else if !line.trim().is_empty() {
@@ -5862,6 +5867,7 @@ fn spawn_test_process(
             *pid_guard = None;
         }
         emit_running_state(&app_handle, false);
+        desktop_assistant::execution_surface(false);
         let success = exit_code == 0;
         append_launcher_log(
             &root_for_thread,
@@ -10265,6 +10271,7 @@ pub fn run() {
         })
         .setup(|app| {
             let app_handle = app.handle().clone();
+            desktop_assistant::init_execution_surface(app_handle.clone());
             if is_flowdetect_agent_runtime(&app_handle) {
                 let root = workspace_root(&app_handle);
                 if let Ok(path)=app_handle.path().app_data_dir(){
