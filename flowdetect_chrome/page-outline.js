@@ -9,6 +9,18 @@
 
   const PALETTE = new Set(["#12b5cb", "#8b5cf6", "#4ade80", "#f59e0b"]);
   let host = null;
+  let transition=null;
+
+  async function leaveForDesktop(){
+    if(!host)return;
+    transition?.cancel();
+    const current=host;
+    if(!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      transition=current.__flowdetectSurface.animate([{opacity:1,transform:'scale(1)'},{opacity:.55,transform:'scale(1.006)',offset:.45},{opacity:0,transform:'scale(1.018)'}],{duration:380,easing:'cubic-bezier(.22,1,.36,1)',fill:'forwards'});
+      try{await transition.finished;}catch{return;}
+    }
+    if(host===current)removeOutline();
+  }
 
   function removeOutline() {
     host?.remove();
@@ -16,6 +28,7 @@
   }
 
   function applyOutline(page) {
+    transition?.cancel();transition=null;
     if (!page?.id || !PALETTE.has(page.color)) {
       removeOutline();
       return;
@@ -47,15 +60,24 @@
       outline.className = "outline";
       const tag = document.createElement("div");
       tag.className = "tag";
-      shadow.append(style, outline, tag);
+      const surface=document.createElement('div');
+      surface.style.cssText='position:absolute;inset:0;pointer-events:none';
+      surface.append(outline,tag);
+      shadow.append(style,surface);
+      host.__flowdetectSurface=surface;
       host.__flowdetectTag = tag;
       document.documentElement.append(host);
+      if(!matchMedia('(prefers-reduced-motion: reduce)').matches)surface.animate([{opacity:0,transform:'scale(1.012)'},{opacity:1,transform:'scale(1)'}],{duration:320,easing:'cubic-bezier(.22,1,.36,1)'});
     }
     host.style.setProperty("--fd-color", page.color);
     host.__flowdetectTag.textContent = `FlowDetect · ${String(page.name || "Página")}`;
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if(message?.type==='flowdetect-page-outline-handoff'){
+      leaveForDesktop().then(()=>sendResponse?.({ok:true}));
+      return true;
+    }
     if (message?.type !== "flowdetect-page-outline-update") return false;
     applyOutline(message.page || null);
     sendResponse?.({ ok: true });
