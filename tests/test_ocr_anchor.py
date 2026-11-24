@@ -363,7 +363,10 @@ class OcrAnchorTests(unittest.TestCase):
                 leitura_relativa=self.config, offset_x=7, offset_y=9,
             )
         self.assertIsNotNone(result)
-        self.assertEqual(events, ["visual", "clique"])
+        self.assertEqual(events, ["visual", "visual", "clique"])
+        confirmation=self.executor.marcar_area_reconhecida.call_args
+        self.assertEqual(confirmation.kwargs['etiqueta'],'OCR encontrado')
+        self.assertEqual(confirmation.kwargs['tema'],'ocr_confirmado')
         self.executor.confirmar_ocr_relativo.assert_not_called()
         self.assertEqual(self.executor.clicar_area_reconhecida.call_args.kwargs["offset_x"], 7)
 
@@ -737,6 +740,82 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertEqual(
             executor.localizar_referencia_hibrida_ocr_visual.call_args.kwargs["region"],
             (530, 116, 604, 690),
+        )
+        executor.registrar_reconhecimento_bem_sucedido.assert_called_once()
+
+        # Uma falha decidida pela aba "Acoes por OCR" precisa sair da busca
+        # hibrida imediatamente; ela nao pode cair na regra geral do card.
+        fluxo_ocr = {
+            "ocr_target_individual": True,
+            "ocr_target_index": 1,
+            "ocr_target_flow": {"acao": "parar"},
+        }
+        executor.localizar_referencia_hibrida_ocr_visual.reset_mock(return_value=True)
+        executor.localizar_referencia_hibrida_ocr_visual.return_value = fluxo_ocr
+        encontrado_fluxo = executor.esperar_imagem(
+            "sped_001",
+            timeout=3,
+            confianca=0.8,
+            perfil_busca="balanced",
+            modo_area_busca="target_window",
+            texto_ocr_esperado="SPED Reinf",
+            leitura_relativa={"largura": 71, "altura": 22, "offset_x": -3, "offset_y": 4},
+        )
+        self.assertIs(encontrado_fluxo, fluxo_ocr)
+
+    def test_chrome_handoff_searches_taskbar_outside_browser_bounds(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor._desktop_tela_livre=True;executor._desktop_bloco_sem_alvo=True
+        executor.obter_metricas_tela_virtual=Mock(return_value=(0,0,1920,1080))
+        executor._cache_ocr_screenshot = {}
+        executor._janela_contexto = ""
+        executor._janela_fixada = None
+        executor.janela_alvo = ""
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        executor.alvo_execucao_ativo = Mock(return_value=False)
+        executor.resolver_imagem = Mock(return_value=(Path(__file__), "sped_001"))
+        executor.resolver_janela_evento = Mock(return_value="")
+        executor.obter_dimensoes_imagem = Mock(return_value=(99, 52))
+        executor.normalizar_modo_area_busca = Mock(return_value="target_window")
+        executor.limitar_regiao = Mock(side_effect=lambda region, **_kwargs: region)
+        executor.extrair_texto_referencia = Mock(return_value="")
+        executor.obter_regiao_historica_reconhecimento = Mock(return_value=None)
+        executor.construir_regiao_personalizada = Mock(return_value=None)
+        janela_ativa = {
+            "title": "Movimento de ISS Tomador (Alteracao)",
+            "left": 530, "top": 116, "width": 604, "height": 690,
+        }
+        executor.obter_janela_fixada = Mock(return_value=None)
+        executor.obter_janela_ativa = Mock(return_value=janela_ativa)
+        executor.janela_parece_interface_flowdetect = Mock(return_value=False)
+        executor.adotar_janela_ativa_para_ocr = Mock(side_effect=AssertionError("Nao deve fixar a janela ativa"))
+        executor.ativar_janela_alvo = Mock(side_effect=AssertionError("Nao deve ativar nenhuma janela"))
+        executor.localizar_janela_alvo = Mock(side_effect=AssertionError("Nao deve procurar ou trocar janela"))
+        executor.localizar_referencia_hibrida_ocr_visual = Mock(return_value={
+            "left": 824, "top": 140, "width": 99, "height": 52,
+            "visual_confirmed": True,
+        })
+        executor.registrar_reconhecimento_bem_sucedido = Mock()
+
+        with patch.object(motor, "OCR_DISPONIVEL", True), patch.object(motor, "OPENCV_DISPONIVEL", True):
+            encontrado = executor.esperar_imagem(
+                "sped_001",
+                timeout=3,
+                confianca=0.8,
+                perfil_busca="balanced",
+                modo_area_busca="target_window",
+                texto_ocr_esperado="SPED Reinf",
+                leitura_relativa={"largura": 71, "altura": 22, "offset_x": -3, "offset_y": 4},
+            )
+
+        self.assertTrue(encontrado["visual_confirmed"])
+        executor.obter_janela_ativa.assert_not_called()
+        executor.adotar_janela_ativa_para_ocr.assert_not_called()
+        executor.ativar_janela_alvo.assert_not_called()
+        executor.localizar_janela_alvo.assert_not_called()
+        self.assertEqual(
+            executor.localizar_referencia_hibrida_ocr_visual.call_args.kwargs["region"],
+            (0, 0, 1920, 1080),
         )
         executor.registrar_reconhecimento_bem_sucedido.assert_called_once()
 

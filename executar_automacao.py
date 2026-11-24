@@ -1410,7 +1410,7 @@ class ExecutorAutomacao:
         etiqueta=None,
         margem=16,
     ):
-        if not getattr(self, 'modo_teste_reconhecimento', False):
+        if not getattr(self, 'modo_teste_reconhecimento', False) and tema!='ocr_confirmado':
             return False
         if os.name == "nt" and hasattr(ctypes, "windll"):
             esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
@@ -1746,7 +1746,7 @@ class ExecutorAutomacao:
         etiqueta=None,
         margem=16,
     ):
-        if not getattr(self, 'modo_teste_reconhecimento', False) and tema != 'variavel':
+        if not getattr(self, 'modo_teste_reconhecimento', False) and tema not in {'variavel','ocr_confirmado'}:
             return False
         # Os marcadores usam uma janela temporaria, mas recebem estilo nativo
         # click-through/no-activate. Assim eles voltam a aparecer tambem na
@@ -9028,11 +9028,11 @@ class ExecutorAutomacao:
         teste_ocr = bool(getattr(self, "modo_teste_reconhecimento", False))
         marcador_exibido = self.marcar_area_reconhecida(
             resultado,
-            duracao=1.8 if teste_ocr else 0.45,
+            duracao=1.8 if teste_ocr else 0.75,
             bloqueante=True,
-            tema="ocr",
-            etiqueta="OCR encontrado" if teste_ocr else None,
-            margem=18 if teste_ocr else 16,
+            tema="ocr_confirmado",
+            etiqueta="OCR encontrado",
+            margem=18,
         )
         if teste_ocr and not marcador_exibido:
             safe_print("Teste OCR: texto encontrado, mas o marcador visual nao abriu.", flush=True)
@@ -9413,6 +9413,7 @@ class ExecutorAutomacao:
 
     def com_cursor_flow(self, x, y, etiqueta, acao):
         """Mostra o cursor sem tomar foco. Uma falha visual nunca repete uma ação."""
+        self.analisar_com_cursor_flow(False)
         executada = False
         resultado = None
 
@@ -9453,12 +9454,16 @@ class ExecutorAutomacao:
     def analisar_com_cursor_flow(self, ativo=True):
         if os.name != 'nt' or getattr(self, 'modo_teste_reconhecimento', False):
             return
+        if os.environ.get('FLOWDETECT_EXECUTION_SURFACE')=='1' and getattr(self,'_superficie_desktop_ativa',False):
+            return  # Sync's capture-excluded WebViews already provide the desktop aura.
         modulo = sys.modules.get('_flowdetect_marcador_visual')
-        if ativo and (not modulo or not modulo.definir_analise_cursor_windows(True)):
-            x, y = getattr(self, '_cursor_flow_posicao', None) or pyautogui.position()
-            self.com_cursor_flow(x, y, 'Analisando', lambda: None)
-        elif modulo and not ativo:
-            modulo.definir_analise_cursor_windows(False)
+        try:
+            if modulo is None and ativo:
+                spec=importlib.util.spec_from_file_location('_flowdetect_marcador_visual',APP_ROOT/'marcador_visual.py')
+                modulo=importlib.util.module_from_spec(spec);sys.modules[spec.name]=modulo;spec.loader.exec_module(modulo)
+            if modulo:modulo.definir_analise_tela_windows(ativo)
+        except Exception:
+            pass  # Visual feedback must never prevent recognition or repeat input.
 
     def escrever_texto(self, texto):
         if not self.preparar_foco_para_digitacao():
@@ -9565,6 +9570,9 @@ class ExecutorAutomacao:
                 self._janela_contexto = titulo_busca
                 janela_info_cache = janela_resolvida
         janela_alvo = titulo_busca or None
+        busca_desktop_livre=bool(getattr(self,'_desktop_tela_livre',False) and getattr(self,'_desktop_bloco_sem_alvo',False) and not usando_alvo_execucao and not self.janela_alvo and self.normalizar_modo_area_busca(modo_area_busca)=='target_window')
+        if busca_desktop_livre:
+            janela_alvo=None;titulo_busca='';janela_info_cache=None
         preservar_janelas = bool(preservar_janelas)
         # Reconhecimento deve apenas observar os pixels que ja estao visiveis.
         # Trazer uma janela para frente durante a busca pode esconder o dialogo
@@ -9620,6 +9628,7 @@ class ExecutorAutomacao:
         # maximizar ou alterar a ordem de nenhuma janela.
         if (
             hibrido_ocr_visual_obrigatorio
+            and not busca_desktop_livre
             and modo_area_busca == "target_window"
             and not usando_alvo_execucao
             and not janela_alvo
@@ -9830,6 +9839,10 @@ class ExecutorAutomacao:
             ):
                 adicionar_regiao_busca(regioes_busca, None, "screen", fallback=True)
 
+            if busca_desktop_livre:
+                # The Windows taskbar lies outside a maximized browser's bounds.
+                # Search actual desktop pixels, including taskbar and other apps.
+                regioes_busca=[{'region':tuple(self.obter_metricas_tela_virtual()),'stage':'desktop_screen','fallback':False}]
             self._ultima_regiao_reconhecimento = regioes_busca[-1]["region"] if regioes_busca else None
             if (usando_alvo_execucao or janela_alvo or self.janela_alvo) and not regioes_busca:
                 if usando_alvo_execucao:
@@ -10404,8 +10417,9 @@ class ExecutorAutomacao:
         if acao_ocr_individual in {"confirmar", "clicar", "ir_para_bloco"}:
             return local
 
-        # O teste visual mantém o contorno. Na execução normal o cursor indica a ação.
-        if not marcador_hibrido:
+        if texto_ocr_esperado:
+            self.marcar_area_reconhecida(local,duracao=.75,bloqueante=True,tema='ocr_confirmado',etiqueta='OCR encontrado',margem=18)
+        elif not marcador_hibrido:
             self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
             local,
@@ -10914,13 +10928,40 @@ class ExecutorAutomacao:
             return self.resultado_fluxo("parar")
         return self.resultado_sucesso_evento(evento)
 
+    def preparar_retorno_chrome_desktop(self, evento):
+        if not getattr(self,'_retorno_chrome_pendente',False):return
+        if evento.get('tipo') not in TIPOS_IMAGEM|TIPOS_OCR|{'uia_elemento'}:return
+        self._retorno_chrome_pendente=False
+        for name in ('_cache_ocr_curto','_cache_ocr_screenshot','_historico_reconhecimento'):
+            getattr(self,name,{}).clear()
+        if self.alvo_execucao_ativo() or self.janela_alvo or (evento.get('detalhes') or {}).get('janela_alvo'):return
+        self._desktop_tela_livre=True
+        self._janela_contexto='';self._janela_fixada=None
+        self.esperar(.25)
+        safe_print('Retorno Chrome -> Desktop: busca na tela inteira, incluindo a barra de tarefas.',flush=True)
+
     def executar_evento(self, evento, contexto_loop=None):
+        self._desktop_bloco_sem_alvo=not bool((evento.get('detalhes') or {}).get('janela_alvo'))
+        if getattr(self,'_pulso_retorno_chrome_pendente',False):
+            self._pulso_retorno_chrome_pendente=False
+            if os.name=='nt' and not getattr(self,'modo_teste_reconhecimento',False):
+                try:
+                    if os.environ.get('FLOWDETECT_EXECUTION_SURFACE')=='1':
+                        self._superficie_desktop_ativa=True
+                        safe_print('EXECUTION_SURFACE|desktop',flush=True)
+                    else:
+                        modulo=sys.modules.get('_flowdetect_marcador_visual')
+                        if modulo is None:
+                            spec=importlib.util.spec_from_file_location('_flowdetect_marcador_visual',APP_ROOT/'marcador_visual.py')
+                            modulo=importlib.util.module_from_spec(spec);sys.modules[spec.name]=modulo;spec.loader.exec_module(modulo)
+                        modulo.pulsar_retorno_desktop_windows()
+                except Exception:pass
+        self.preparar_retorno_chrome_desktop(evento)
         try:
             return self._executar_evento_com_cursor(evento, contexto_loop)
         finally:
-            modulo_cursor = sys.modules.get('_flowdetect_marcador_visual')
-            if modulo_cursor:
-                modulo_cursor.definir_analise_cursor_windows(False)
+            self.analisar_com_cursor_flow(False)
+            self._janela_retorno_chrome=None
 
     def _executar_evento_com_cursor(self, evento, contexto_loop=None):
         self.preparar_escopo_variaveis(contexto_loop)
@@ -11257,7 +11298,7 @@ class ExecutorAutomacao:
         spec.loader.exec_module(roteiro)
         pasta = os.environ.get("FLOWDETECT_MAP_BRIDGE_DIR", "")
         if not pasta:
-            raise RuntimeError("Caminhos Chrome devem ser executados pelo Agente atualizado. Nao ha ponte Chrome nesta execucao.")
+            raise RuntimeError("Esta execução iniciou sem a ponte Chrome. Feche o Studio e abra a versão atualizada para executar seções Chrome pela extensão; elas não usam o reconhecimento do desktop como alternativa.")
         passos = []
         sequencias = set(caminho.get("sequences") or [])
         for item in self.eventos:
@@ -11284,6 +11325,8 @@ class ExecutorAutomacao:
             reply.unlink()
         temporary = base / "request.tmp"
         temporary.write_text(json.dumps({"automation": automacao, "entryOrder": int(evento["ordem"]), "pageId": caminho.get("page_id") or "1"}, ensure_ascii=False), encoding="utf-8")
+        self._superficie_desktop_ativa=False
+        safe_print('EXECUTION_SURFACE|chrome',flush=True)
         os.replace(temporary, base / "request.json")
         safe_print(f"Caminho Chrome: {caminho['name']} — aguardando a extensao no agente.", flush=True)
         limite = time.monotonic() + 1900
@@ -11296,6 +11339,9 @@ class ExecutorAutomacao:
         result = json.loads(reply.read_text(encoding="utf-8"))
         if not result.get("ok"):
             raise RuntimeError(result.get("error") or "Caminho Chrome falhou.")
+        self._retorno_chrome_pendente=True
+        self._desktop_tela_livre=False
+        self._pulso_retorno_chrome_pendente=True
         for name, value in (result.get("variables") or {}).items():
             if name in self.nomes_variaveis_capturadas() and isinstance(value, str):
                 self.salvar_variavel_contexto(name, value)
@@ -12282,6 +12328,7 @@ class ExecutorAutomacao:
         return self.executar_loop_legado(loop_start)
 
     def fechar_sessao_chrome(self):
+        safe_print('EXECUTION_SURFACE|end',flush=True)
         modulo_cursor = sys.modules.get('_flowdetect_marcador_visual')
         if modulo_cursor:
             modulo_cursor.fechar_cursor_windows()
