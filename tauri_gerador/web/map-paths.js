@@ -59,6 +59,41 @@ export function initMapPaths({invoke,chooseFile,getRoadmap,getLibrary,getPage,be
     event.preventDefault();event.stopPropagation();
     open(button.dataset.mapSectionAction,button.dataset.mapSectionSequence||'');
   });
+  document.getElementById('commandMapList')?.addEventListener('change',async event=>{
+    const control=event.target.closest('[data-map-section-engine],[data-map-section-page]');
+    if(!control||busy)return;
+    const sequence=control.dataset.mapSectionEngine||control.dataset.mapSectionPage;
+    const section=control.closest('[data-map-section]');
+    const engine=section.querySelector('[data-map-section-engine]').checked?'chrome':'desktop';
+    const previous=(getRoadmap()?.map_paths||[]).find(path=>(path.sequences||[]).includes(sequence));
+    const pageId=section.querySelector('[data-map-section-page]')?.value||String(previous?.page_id||'1');
+    busy=true;control.disabled=true;
+    try{
+      await beforeChange();
+      const result=await invoke('map_paths_action',{request:{action:'section_execution',sequence,engine,pageId,name:section.querySelector('.map-path-lane-title strong')?.textContent||sequence}});
+      apply(result,'section_execution');
+      // Persisting recreates the map DOM. Seed the old palette before the next
+      // paint so the new section can crossfade instead of appearing fully violet.
+      const next=[...document.querySelectorAll('[data-map-section]')].find(node=>node.dataset.mapSection===sequence);
+      const oldEngine=previous?.engine||'desktop';
+      if(next&&oldEngine!==engine&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+        next.classList.add('is-engine-seeding');
+        next.dataset.engine=oldEngine;
+        const toggle=next.querySelector('[data-map-section-engine]');
+        if(toggle)toggle.checked=oldEngine==='chrome';
+        getComputedStyle(next,'::before').opacity;
+        getComputedStyle(next.querySelector('.map-section-header')).backgroundColor;
+        next.classList.remove('is-engine-seeding');
+        requestAnimationFrame(()=>{if(next.isConnected){next.dataset.engine=engine;if(toggle)toggle.checked=engine==='chrome';}});
+      }
+
+    }catch(error){
+      if(control.dataset.mapSectionEngine)control.checked=previous?.engine==='chrome';
+      else control.value=String(previous?.page_id||'1');
+      busy=false;
+      open('connect',sequence);message(error?.message||error,true);
+    }finally{busy=false;control.disabled=false;}
+  });
   $('mapPathsClose').onclick=()=>dialog.close();
   $('mapPathDeleteCancel').onclick=()=>dialog.close();
   $('mapPathDelete').onclick=()=>action({action:'delete',sequence:sourceSequence});

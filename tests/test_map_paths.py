@@ -7,12 +7,53 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import gerenciar_roteiro as helper
 from executar_automacao import ExecutorAutomacao
 
 
 class MapPathsTests(unittest.TestCase):
+    def test_create_empty_section_in_empty_automation_can_change_mode_and_be_deleted(self):
+        payload={'eventos':[],'sequencia_inicial':'principal'}
+        with patch.object(helper,'carregar_e_normalizar',return_value=payload), patch.object(helper,'salvar_e_retornar',side_effect=lambda draft:draft):
+            result=helper.comando_caminhos_mapa(SimpleNamespace(request=json.dumps({'action':'create','name':'Portal','engine':'chrome','pageId':'2'}),request_file=None))
+        self.assertEqual(result['eventos'],[])
+        section=result['map_paths'][0]
+        self.assertEqual(section['name'],'Portal');self.assertEqual(section['engine'],'chrome')
+        self.assertEqual(helper.contar_secoes_payload(result),1)
+        helper.configurar_execucao_secao(result,section['entry_sequence'],'desktop','2')
+        self.assertEqual(section['engine'],'desktop')
+        helper.remover_secao_mapa(result,section['entry_sequence'])
+        self.assertEqual(result['map_paths'],[]);self.assertEqual(result['eventos'],[])
+
+    def test_section_engine_can_change_without_changing_blocks_or_connections(self):
+        payload={'eventos':[{'ordem':1,'tipo':'texto_livre','texto':'Web','sequencia':'web','detalhes':{'ao_sucesso':'ir_para_bloco','bloco_sucesso':2}},
+                            {'ordem':2,'tipo':'texto_livre','texto':'Desktop','sequencia':'principal','detalhes':{}}]}
+        original=json.loads(json.dumps(payload['eventos']))
+        section=helper.configurar_execucao_secao(payload,'web','chrome','2','Portal')
+        self.assertEqual(section['engine'],'chrome');self.assertEqual(section['page_id'],'2')
+        self.assertEqual(section['parent'],'')
+        self.assertEqual(payload['eventos'],original)
+        helper.configurar_execucao_secao(payload,'web','desktop','2')
+        self.assertEqual(section['engine'],'desktop');self.assertEqual(len(payload['map_paths']),1)
+        self.assertEqual(payload['eventos'],original)
+
+    def test_section_engine_change_is_isolated_and_rejects_desktop_only_blocks(self):
+        payload={'eventos':[{'ordem':1,'tipo':'texto_livre','texto':'A','sequencia':'a','detalhes':{}},
+                            {'ordem':2,'tipo':'texto_livre','texto':'B','sequencia':'b','detalhes':{}}],
+                 'map_paths':[{'id':'group','name':'Grupo','parent':'principal','entry_sequence':'a','sequences':['a','b'],'engine':'desktop'}]}
+        helper.configurar_execucao_secao(payload,'a','chrome','3')
+        self.assertEqual(payload['map_paths'][0]['sequences'],['b'])
+        self.assertEqual(payload['map_paths'][0]['engine'],'desktop')
+        self.assertEqual(payload['map_paths'][1]['sequences'],['a'])
+        self.assertEqual(payload['map_paths'][1]['engine'],'chrome')
+        invalid={'eventos':[{'ordem':1,'tipo':'abrir_programa','sequencia':'principal','detalhes':{'caminho':'notepad.exe'}}]}
+        with self.assertRaisesRegex(ValueError,'Chrome'):helper.configurar_execucao_secao(invalid,'principal','chrome')
+        self.assertNotIn('map_paths',invalid)
+        for engine,page in [('invalid','1'),('chrome','99')]:
+            with self.assertRaises(ValueError):helper.configurar_execucao_secao(payload,'a',engine,page)
+
     def test_chrome_json_recovers_editable_blocks_routes_images_and_data(self):
         project = {'schema': 'flowdetect_chrome_automation', 'initial_sequence': 'principal', 'steps': [
             {'type': 'ocr_text', 'source_order': 2, 'sequence': 'principal', 'text': 'Pesquisar', 'action': 'clicar', 'click': False, 'offset_x': 20, 'click_anchor': {'from_text_left': 22}, 'preview_image': {'data_url': 'data:image/png;base64,aW1hZ2U='}, 'on_failure': {'action': 'ir_para_bloco', 'block': 8, 'delay_ms': 300}},
@@ -41,15 +82,15 @@ class MapPathsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'ainda nao importaveis'):
                 helper.converter_projeto_chrome_importado({'schema': project['schema'], 'steps': [{'type': 'unknown'}]}, source)
 
-    def test_section_count_matches_nonempty_map_lanes_and_library_summary(self):
+    def test_section_count_includes_empty_sections_and_library_summary(self):
         payload = {'eventos': [{'sequencia': 'principal'}, {'sequencia': 'principal'}, {'sequencia': 'web'}],
                    'map_paths': [{'sequences': ['web', 'empty']}]}
-        self.assertEqual(helper.contar_secoes_payload(payload), 2)
+        self.assertEqual(helper.contar_secoes_payload(payload), 3)
         self.assertEqual(helper.contar_secoes_payload({'eventos': []}), 0)
         with patch.object(helper, 'carregar_biblioteca', return_value={'items': [{'id': 'test'}]}), \
              patch.object(helper, 'obter_automacao_ativa_id', return_value='test'), \
              patch.object(helper, 'carregar_payload_da_automacao', return_value=payload):
-            self.assertEqual(helper.listar_automacoes_resumidas()['items'][0]['section_count'], 2)
+            self.assertEqual(helper.listar_automacoes_resumidas()['items'][0]['section_count'], 3)
 
     def test_delete_section_clears_incoming_routes_and_preserves_other_sections(self):
         payload = {'sequencia_inicial': 'principal', 'eventos': [
@@ -130,6 +171,9 @@ class MapPathsTests(unittest.TestCase):
             result = call({'action': 'create', 'name': 'Recuperar', 'parent': 'principal'})
             sequence = result['map_paths'][0]['entry_sequence']
             self.assertEqual(result['summary']['section_count'], 2)
+            self.assertEqual(len(result['events']),1)
+            run=subprocess.run([sys.executable,str(script),'add-text','--text','Primeiro bloco','--sequencia',sequence],cwd=base,capture_output=True)
+            self.assertEqual(run.returncode,0,run.stderr.decode('utf-8',errors='replace'))
             result = call({'action': 'connect', 'source': 1, 'route': 'failure', 'sequence': sequence})
             self.assertEqual(result['events'][0]['details']['sequencia_nao_encontrar'], sequence)
             self.assertTrue(list((base / '.flowdetect_roteiro_history').glob('*.json')))

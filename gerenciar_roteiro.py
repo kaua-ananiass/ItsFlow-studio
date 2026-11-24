@@ -600,8 +600,9 @@ def contar_sequencias_payload(payload):
 
 
 def contar_secoes_payload(payload):
-    """Count the nonempty lanes rendered as sections in the command map."""
-    return len({normalizar_nome_sequencia(e.get("sequencia")) for e in (payload or {}).get("eventos", [])})
+    """Include explicitly created empty sections as well as lanes with blocks."""
+    return len({normalizar_nome_sequencia(e.get("sequencia")) for e in (payload or {}).get("eventos", [])} |
+               {s for path in (payload or {}).get("map_paths", []) for s in path.get("sequences", [])})
 
 
 def exportar_automacao_para_zip(automacao_id, item, destino_zip=None):
@@ -3007,7 +3008,7 @@ def payload_para_resposta(payload):
         },
         "events": [card_do_evento(evento) for evento in eventos],
         "map_paths": payload.get("map_paths", []),
-        "sequences": sorted({normalizar_nome_sequencia(evento.get("sequencia")) for evento in eventos}) or ["principal"],
+        "sequences": sorted({normalizar_nome_sequencia(evento.get("sequencia")) for evento in eventos} | {s for path in payload.get("map_paths", []) for s in path.get("sequences", [])}) or ["principal"],
         "sequence_settings": configuracoes_sequencia,
         "workbook": carregar_planilha_meta(),
         "runtime_compatibility": gerar_resumo_compatibilidade_payload(payload),
@@ -3229,11 +3230,42 @@ def mesclar_caminho_mapa(payload, origem, nome, pagina, pasta_origem=None):
     return caminho
 
 
+def configurar_execucao_secao(payload, sequencia, engine, pagina="1", nome=""):
+    sequencia = normalizar_nome_sequencia(sequencia)
+    if engine not in {"chrome", "desktop"}:
+        raise ValueError("Escolha Chrome ou Desktop para a seção.")
+    eventos = [e for e in payload.get("eventos", []) if normalizar_nome_sequencia(e.get("sequencia")) == sequencia]
+    if not eventos and not any(sequencia in path.get("sequences", []) for path in payload.get("map_paths", [])):
+        raise ValueError("A seção não possui blocos ou foi removida. Atualize o mapa.")
+    pagina = str(pagina or "1")
+    if pagina not in {"1", "2", "3", "4"}:
+        raise ValueError("Escolha uma página Chrome de 1 a 4.")
+    if engine == "chrome":
+        for evento in eventos:
+            passo, aviso = converter_evento_para_chrome(evento)
+            if aviso or passo is None:
+                raise ValueError(f"A seção não pode executar no Chrome: {aviso or 'bloco incompatível'}. Mantenha esse bloco em uma seção Desktop.")
+    caminhos = payload.setdefault("map_paths", [])
+    caminho = next((p for p in caminhos if sequencia in p.get("sequences", [])), None)
+    if caminho and len(caminho["sequences"]) > 1:
+        novo = {**caminho, "id": uuid.uuid4().hex[:12], "entry_sequence": sequencia, "sequences": [sequencia]}
+        caminho["sequences"] = [s for s in caminho["sequences"] if s != sequencia]
+        if caminho.get("entry_sequence") == sequencia:
+            caminho["entry_sequence"] = caminho["sequences"][0]
+        caminhos.append(novo)
+        caminho = novo
+    if not caminho:
+        caminho = {"id": uuid.uuid4().hex[:12], "name": str(nome or sequencia)[:120], "parent": "", "entry_sequence": sequencia, "sequences": [sequencia]}
+        caminhos.append(caminho)
+    caminho.update(engine=engine, page_id=pagina)
+    return caminho
+
+
 def remover_secao_mapa(payload, sequencia):
     sequencia = str(sequencia or "").strip()
     eventos = payload.get("eventos", [])
     removidos = [e for e in eventos if normalizar_nome_sequencia(e.get("sequencia")) == sequencia]
-    if not sequencia or not removidos:
+    if not sequencia or (not removidos and not any(sequencia in path.get("sequences", []) for path in payload.get("map_paths", []))):
         raise ValueError("A secao nao possui blocos ou ja foi removida.")
     ordens_removidas = {int(e["ordem"]) for e in removidos}
     ordens_anteriores = mapa_ordens_eventos_existentes(eventos)
@@ -3696,7 +3728,17 @@ def comando_caminhos_mapa(args):
             else:
                 payload.setdefault("eventos", []).append(evento)
         return salvar_e_retornar(payload)
-    if acao in {"create", "import", "importFile"}:
+    if acao == "section_execution":
+        configurar_execucao_secao(payload, pedido.get("sequence"), pedido.get("engine"), pedido.get("pageId"), pedido.get("name"))
+        return salvar_e_retornar(payload)
+    if acao == "create":
+        token = uuid.uuid4().hex[:12]
+        sequence = f"caminho_{token}_0"
+        payload.setdefault("map_paths", []).append({"id":token,"name":str(pedido.get("name") or "Nova seção")[:120],
+            "parent":normalizar_nome_sequencia(pedido.get("parent")),"entry_sequence":sequence,"sequences":[sequence]})
+        configurar_execucao_secao(payload, sequence, pedido.get("engine") or "desktop", pedido.get("pageId") or "1")
+        return salvar_e_retornar(payload)
+    if acao in {"import", "importFile"}:
         if acao == "importFile":
             arquivo = Path(str(pedido.get("file") or ""))
             with tempfile.TemporaryDirectory(prefix="flowdetect_map_") as temp:
@@ -3723,15 +3765,10 @@ def comando_caminhos_mapa(args):
                 caminho = mesclar_caminho_mapa(payload, origem, pedido.get("name") or arquivo.stem, pedido.get("parent") or "principal", pasta)
                 caminho.update(engine="chrome" if chrome_importado or pedido.get("engine") == "chrome" else "desktop", page_id=str(pedido.get("pageId") or "1"))
             return salvar_e_retornar(payload)
-        if acao == "import":
-            automacao_id = str(pedido.get("id") or "")
-            _, item = localizar_item_biblioteca(carregar_biblioteca(), automacao_id)
-            origem = carregar_payload_da_automacao(automacao_id)
-            pasta = diretorio_automacao(automacao_id)
-        else:
-            item = {"nome": "Novo caminho"}
-            origem = {"sequencia_inicial": "principal", "eventos": [{"ordem": 1, "tipo": "texto_livre", "texto": "", "sequencia": "principal", "intervalo_antes": 0, "detalhes": {}}]}
-            pasta = None
+        automacao_id = str(pedido.get("id") or "")
+        _, item = localizar_item_biblioteca(carregar_biblioteca(), automacao_id)
+        origem = carregar_payload_da_automacao(automacao_id)
+        pasta = diretorio_automacao(automacao_id)
         caminho = mesclar_caminho_mapa(payload, origem, pedido.get("name") or item["nome"], pedido.get("parent") or "principal", pasta)
         caminho["engine"] = "chrome" if pedido.get("engine") == "chrome" else "desktop"
         caminho["page_id"] = str(pedido.get("pageId") or "")
