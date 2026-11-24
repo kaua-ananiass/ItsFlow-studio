@@ -7,6 +7,7 @@ import {renderTableEditor,initTableBlocks} from './table-blocks.js';
 import {initChatGPT} from './chatgpt.js';
 import {initGoogleWorkspace} from './google-workspace.js';
 import {revealWorkspace} from './workspace-transition.js';
+import {initInterfaceZoom} from './interface-zoom.js';
 
 let chatWorkspace = null;
 let chatMapWorkspace = null;
@@ -20327,6 +20328,8 @@ function beginKeyCapture(target) {
   showCaptureOverlay("Aperte a tecla ou o atalho desejado. Quando capturar, esta janela some automaticamente.");
   setMessage("Pressione a tecla ou combinacao agora. Use ESC para cancelar.", "success");
 }
+
+initInterfaceZoom({ isCapturing: () => Boolean(state.captureTarget) });
 
 window.addEventListener("keydown", (event) => {
   if (!state.captureTarget || state.captureTarget.mode !== "key") {
