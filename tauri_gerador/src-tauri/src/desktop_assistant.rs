@@ -242,14 +242,37 @@ fn layout(app:&AppHandle,open:bool){
     }
 }
 
+fn valid_assistant_control(op:&str)->bool{
+    ["arm","open","collapse","close","explain","retry","edit","confirm","undo","import","refresh","capture","destination"].contains(&op)
+}
+
+#[cfg(test)]
+mod section_control_tests{
+    #[test]
+    fn section_selection_passes_the_native_command_boundary(){
+        assert!(super::valid_assistant_control("destination"));
+        assert!(super::valid_assistant_control("confirm"));
+        assert!(!super::valid_assistant_control("unknown-control"));
+    }
+}
+
 #[tauri::command]
 pub async fn desktop_assistant_action(app:AppHandle,request:Value)->Result<Value,String>{
     let op=request["op"].as_str().unwrap_or("status");
     if op=="drag"{return Ok(serde_json::json!({"accepted":true}));}
+    if op=="map_sections"{
+        let handle=app.clone();
+        let context=tauri::async_runtime::spawn_blocking(move||chrome_demonstration_request(&handle,serde_json::json!({"operation":"status"}))).await.map_err(|error|error.to_string())??;
+        let guard=COMPANION.lock().map_err(|_|"Assistente indisponível")?;
+        let companion=guard.as_ref().ok_or("Abra o assistente no Studio.")?;
+        if context["automation"]["id"]!=companion.snapshot["automation"]["id"]{return Err("Reabra a automação vinculada a este assistente.".into());}
+        send(&companion.input,&serde_json::json!({"op":"map_sections","sections":context["sections"],"revision":context["revision"]}))?;
+        return Ok(serde_json::json!({"accepted":true}));
+    }
     let guard=COMPANION.lock().map_err(|_|"Assistente indisponível")?;
     let companion=guard.as_ref().ok_or("Abra Demonstrar no desktop no Chat IA do Studio.")?;
     if op=="status"{return Ok(companion.snapshot.clone());}
-    if !["arm","open","collapse","close","explain","retry","edit","confirm","undo","import","refresh","capture"].contains(&op){return Err("Controle do assistente inválido.".into());}
+    if !valid_assistant_control(op){return Err(format!("Controle do assistente inválido: {op}. Reinicie o Studio para carregar a versão atualizada."));}
     send(&companion.input,&request)?;
     if op=="close"{hide_surfaces(&app);}
     Ok(serde_json::json!({"accepted":true}))
@@ -278,7 +301,7 @@ fn start(app:AppHandle)->Result<Value,String>{
     fs::create_dir_all(&sessions).map_err(|error|error.to_string())?;
     use sha2::{Digest,Sha256};
     let filename=format!("{:x}.json",Sha256::digest(id.as_bytes()));
-    let config=serde_json::json!({"automation":status["automation"],"revision":status["revision"],"studio_pid":std::process::id(),"session_path":sessions.join(filename)});
+    let config=serde_json::json!({"automation":status["automation"],"revision":status["revision"],"sections":status["sections"],"studio_pid":std::process::id(),"session_path":sessions.join(filename)});
     let mut command=Command::new(program);
     command.args(args).arg("-u").arg(script).current_dir(&root).env("PYTHONUTF8","1").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     configure_no_window(&mut command);

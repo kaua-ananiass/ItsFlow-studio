@@ -3,10 +3,10 @@ import {createRoot} from 'react-dom/client';
 import {ArrowUp,ArrowRight,Camera,ScanLine,Check,ChevronDown,Minus,MousePointer2,RefreshCw,Settings2,Trash2,X} from 'lucide-react';
 import {AIThinkingOrb} from './ui/ai-thiking-orb-and-input';
 import {GeneratedMessage} from './generated-message';
-import {CompanionStepBuilder,type CompanionStep} from './companion-step-builder';
+import {CompanionStepBuilder,type CompanionStep,type CompanionSection} from './companion-step-builder';
 
 type Step=CompanionStep;
-type Snapshot={id?:string;open:boolean;armed?:boolean;busy:boolean;capturing?:boolean;error?:string;status:string;automation?:{name:string};events:Step[];messages:{role:string;content:string}[];pending?:string;imported?:boolean;last_saved?:{id:string;count:number}};
+type Snapshot={sections?:CompanionSection[];target_section?:string;id?:string;open:boolean;armed?:boolean;busy:boolean;capturing?:boolean;error?:string;status:string;automation?:{name:string};events:Step[];messages:{role:string;content:string}[];pending?:string;imported?:boolean;last_saved?:{id:string;count:number}};
 const initial:Snapshot={open:false,busy:false,status:'Seu assistente de automações',events:[],messages:[]};
 const tauri=(window as any).__TAURI__;
 function Companion(){
@@ -41,7 +41,11 @@ function Companion(){
  const currentStep=pending||state.events.at(-1);
  const canContinue=!state.capturing&&(!pending?.requires_confirmation||!!pending.confirmed)&&!state.imported&&!state.busy&&(!pending||!!pending.description)&&(pending?.kind!=='desktop_text'||!!pending.value?.trim());
  const thinking=state.busy||settling||sending;
- const retry=()=>void command('retry');
+ const currentError=error||state.error||'';
+ const incompatibleControl=/Controle do assistente inv[aá]lido/i.test(currentError);
+ const chatLimit=currentError.includes('subscription_sharing_usage_limit_exceeded');
+ const mapError=!!currentError&&!incompatibleControl&&!chatLimit&&(currentStep?.builder_stage??0)>=3;
+ const retry=()=>void command(mapError?'map_sections':'retry');
  function submit(){if(!text.trim()||busy)return;const message=text.trim();setText('');setSending(true);void command('explain',{text:message});}
  return <div className="companion-notch-stage" data-expanded={state.open} data-phase={state.capturing?'capturing':thinking?'thinking':state.imported?'complete':'ready'}>
   <div className="companion-notch" data-capturing={!!state.capturing}>
@@ -51,7 +55,7 @@ function Companion(){
   {state.open&&<main className="companion-card" data-closing={closing} data-phase={thinking?'thinking':state.error||error?'error':'ready'}>
   <header className="companion-header"><div className="companion-brand"><span>Construir fluxo <small>com Sync</small></span></div><div><button title="Recolher" aria-label="Recolher assistente" onClick={()=>void command('collapse')}><Minus size={15}/></button><button title="Fechar" aria-label="Fechar assistente" onClick={()=>void command('close')}><X size={15}/></button></div></header>
   <section className="companion-body" ref={log}>
-   {thinking?<div className="companion-thinking" key="thinking" role="status" data-completed={settling}><div className="companion-halo"/><AIThinkingOrb active={!settling} completed={settling} size={160}/><p>{settling?<><Check size={13}/>Entendi sua etapa</>:state.status||'Pensando…'}</p><small>{settling?'Vamos construir juntos.':'Conectando sua ação ao próximo passo.'}</small></div>:currentStep?<>{last?.role==='assistant'&&<div className="companion-builder-advice"><GeneratedMessage text={last.content} animate/></div>}{history&&<div className="companion-answer">{state.messages.slice(0,-1).map((message,index)=><article key={index} data-role={message.role}><GeneratedMessage text={message.content}/></article>)}</div>}<CompanionStepBuilder key={currentStep.id} step={currentStep} index={state.events.length} disabled={busy} editable={!!pending&&!state.imported} saved={!!state.imported} command={command}/></>:<>
+   {thinking?<div className="companion-thinking" key="thinking" role="status" data-completed={settling}><div className="companion-halo"/><AIThinkingOrb active={!settling} completed={settling} size={160}/><p>{settling?<><Check size={13}/>Entendi sua etapa</>:state.status||'Pensando…'}</p><small>{settling?'Vamos construir juntos.':'Conectando sua ação ao próximo passo.'}</small></div>:currentStep?<>{last?.role==='assistant'&&<div className="companion-builder-advice"><GeneratedMessage text={last.content} animate/></div>}{history&&<div className="companion-answer">{state.messages.slice(0,-1).map((message,index)=><article key={index} data-role={message.role}><GeneratedMessage text={message.content}/></article>)}</div>}<CompanionStepBuilder sections={state.sections} targetSection={state.target_section} key={currentStep.id} step={currentStep} index={state.events.length} disabled={busy} editable={!!pending&&!state.imported} saved={!!state.imported} command={command}/></>:<>
     {!pending&&!state.events.length?<div className="companion-welcome"><AIThinkingOrb size={140}/><h1>Vamos fazer juntos?</h1><p>Selecione uma área, escolha a ação<br/>e veja seu bloco ganhar forma.</p></div>:<div className="companion-context"><span className="companion-dot"/><span>{state.imported?'Salvo no mapa':pending?'Vamos entender esta etapa':'Pronto para o próximo passo'}</span></div>}
     {!!state.messages.length&&<div className="companion-answer" key={last?.content}>
      {history?state.messages.map((message,index)=><article key={index} data-role={message.role}><small>{message.role==='user'?'Você':'itsflow'}</small><GeneratedMessage text={message.content}/></article>):last?.role==='assistant'?<GeneratedMessage text={last.content} animate={!!pending||!!state.events.length}/>:<p className="companion-user-text">{last?.content}</p>}
@@ -60,10 +64,10 @@ function Companion(){
    {settings&&!thinking&&<section className="companion-settings" aria-label="Rascunho da automação"><div className="companion-settings-heading"><span>{state.events.length} etapas no rascunho</span><button aria-label="Fechar configuração" onClick={()=>setSettings(false)}><X size={13}/></button></div>
     <ol className="companion-draft-list">{state.events.map((step,index)=><li key={step.id}><span>{String(index+1).padStart(2,'0')}</span><strong>{step.label}</strong><small>{step.confirmed?'Confirmado':'Em construção'}</small></li>)}</ol>
     <div className="companion-setting-actions"><button disabled={state.busy||!state.events.length||state.imported} onClick={()=>void command('undo')}><Trash2 size={12}/>Descartar última</button><button disabled={state.busy} onClick={()=>void command('refresh')}><RefreshCw size={12}/>Atualizar destino</button></div>
-    <button className="companion-save" disabled={!canContinue||!state.events.length} onClick={()=>void command('import')}>Enviar etapas ao mapa<ArrowRight size={13}/></button>
+    <button className="companion-save" disabled={!canContinue||!state.events.length||!state.target_section} onClick={()=>void command('import')}>Enviar etapas ao mapa<ArrowRight size={13}/></button>
    </section>}
   </section>
-  {(error||state.error)&&<div className="companion-error" role="alert"><p>{error||state.error}</p>{pending&&<button disabled={state.busy} onClick={retry}>Tentar análise novamente<RefreshCw size={12}/></button>}</div>}
+  {currentError&&<div className="companion-error" role="alert"><p>{incompatibleControl?'O Studio aberto está com uma versão anterior do controle do assistente. Feche o Studio por completo e abra novamente a versão atualizada. Seu rascunho está salvo.':chatLimit?'O limite do ChatGPT foi atingido. Você pode continuar capturando, configurando e enviando blocos ao mapa sem IA. Use o chat novamente após a renovação do limite.':currentError}</p>{pending&&!incompatibleControl&&(chatLimit?<button disabled={state.busy} onClick={()=>void command('edit')}>Continuar sem IA<ArrowRight size={12}/></button>:<button disabled={state.busy} onClick={retry}>{mapError?'Atualizar mapa':'Tentar pergunta novamente'}<RefreshCw size={12}/></button>)}</div>}
   <footer className="companion-footer">
    <form className="companion-composer" data-sending={sending} onSubmit={event=>{event.preventDefault();submit();}}><textarea aria-label="Mensagem ao mini assistente" placeholder={pending?'Conte o que essa ação faz…':'O que você quer automatizar?'} rows={2} value={text} maxLength={4000} disabled={busy} onChange={event=>setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();submit();}}}/><button type="submit" aria-label="Enviar mensagem" disabled={busy||!text.trim()}><ArrowUp size={17}/></button></form>
    <div className="companion-toolbar"><div><button aria-label="Configurar etapa" title="Rascunho e configuração" aria-pressed={settings} disabled={busy} onClick={()=>setSettings(!settings)}><Settings2 size={15}/><span>{state.events.length?`${state.events.length} etapas`:'Ajustes'}</span></button><button aria-label="Selecionar região" title="Selecionar uma área da tela" disabled={busy||!canContinue} onClick={()=>void command('capture')}><Camera size={15}/></button><button aria-label="Histórico da conversa" title="Ver conversa" disabled={busy} onClick={()=>{setHistory(!history);}}><ChevronDown size={15}/></button></div><button className="companion-next" disabled={!canContinue||busy} onClick={()=>void command('capture')}><span>{state.events.length?'Próxima área':'Selecionar área'}</span><MousePointer2 size={13}/></button></div>
