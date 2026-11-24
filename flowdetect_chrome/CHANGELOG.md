@@ -1,5 +1,11 @@
 # Histórico de versões
 
+## Atualizacoes de desenvolvimento - 24/11/2026
+
+- Retorno Chrome/Desktop restaura a guia vinculada antes de confirmar a saida.
+- Borda da guia desaparece suavemente no Desktop e retorna ao retomar o caminho Chrome.
+- A versao publicada da extensao e seu historico de releases permanecem preservados.
+
 ## 0.2.101 — 23/11/2026
 
 - Capturas agora são anexadas como imagem à análise automática, além do texto extraído da região.
