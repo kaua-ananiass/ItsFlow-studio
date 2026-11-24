@@ -194,3 +194,37 @@
 }
 
 .fdchat-assist-mode{padding:10px 18px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#0d2029}.fdchat-assist-mode>div{display:flex;gap:3px;background:#091820;padding:3px;border-radius:8px}.fdchat .fdchat-assist-mode button{font-size:10px;padding:6px 10px;min-height:28px}.fdchat .fdchat-assist-mode button[aria-pressed=true]{background:#235047;color:#b9f1db}.fdchat-assist-mode small{font-size:10px;color:#89a9b6;line-height:1.6;flex-basis:100%}
+/* Account controls live in the conversation sidebar. */
+.fdchat-sidebar-tools{display:flex;align-items:center;gap:3px}
+.fdchat-sidebar-tools button[aria-expanded=true]{color:#8ce8d2;background:#16382f}
+.fdchat[data-accounts=true] .fdchat-sidebar{flex-basis:300px}
+.fdchat .fdchat-sidebar .fdchat-settings{display:flex;flex-direction:column;align-items:stretch;flex:0 1 auto;min-height:0;max-height:65%;overflow:auto;scrollbar-width:thin;gap:14px;padding:12px 8px 18px;margin:0 0 14px;background:transparent;border-bottom:1px solid #29434e;border-radius:0;animation:fdchat-account-open .18s ease-out}
+.fdchat .fdchat-sidebar .fdchat-account-heading{min-width:0}
+.fdchat .fdchat-sidebar .fdchat-account-heading strong{display:block;font-size:11px;overflow-wrap:anywhere}
+.fdchat .fdchat-sidebar .fdchat-account-heading p{font-size:10px}
+.fdchat .fdchat-sidebar .fdchat-account-picker{display:flex;flex-direction:column;gap:7px;font-size:10px;width:100%;margin:0}
+.fdchat .fdchat-sidebar .fdchat-account-picker select{width:100%;max-width:100%;min-width:0;font-size:10px;text-overflow:ellipsis}
+.fdchat .fdchat-sidebar .fdchat-account-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;width:100%;max-width:none;margin:0;align-self:stretch}
+.fdchat .fdchat-sidebar .fdchat-account-actions button{width:100%;justify-content:center;min-height:32px;padding:8px;font-size:10px}
+.fdchat .fdchat-sidebar .fdchat-model-label{display:flex;flex-direction:column;align-items:stretch;gap:7px;width:100%;font-size:10px}
+.fdchat .fdchat-sidebar .fdchat-model-label select{width:100%;max-width:none;flex:none;font-size:10px}
+.fdchat .fdchat-sidebar .fdchat-model-label button{font-size:10px;align-self:flex-end;padding:4px 8px}
+.fdchat .fdchat-sidebar .fdchat-privacy{font-size:9px;line-height:1.6}
+@keyframes fdchat-account-open{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@media(max-width:900px){.fdchat[data-accounts=true] .fdchat-sidebar{width:min(300px,90vw)}}
+
+/* Keep the account panel mounted so opening and closing share one transition. */
+.fdchat-account-reveal{display:grid;grid-template-rows:0fr;flex:0 1 auto;min-height:0;overflow:hidden;transition:grid-template-rows 320ms cubic-bezier(.22,1,.36,1)}
+.fdchat-account-reveal[data-open=true]{grid-template-rows:1fr}
+.fdchat-account-reveal-inner{min-height:0;overflow:hidden}
+.fdchat .fdchat-sidebar .fdchat-account-reveal .fdchat-settings{max-height:min(58vh,580px);animation:none}
+.fdchat-account-reveal .fdchat-settings> *{opacity:0;transform:translateY(-6px);transition:opacity 140ms ease,transform 180ms ease;transition-delay:0ms}
+.fdchat-account-reveal[data-open=true] .fdchat-settings> *{opacity:1;transform:none;transition-duration:240ms;transition-delay:70ms}
+.fdchat-account-reveal[data-open=true] .fdchat-settings> :nth-child(2){transition-delay:95ms}
+.fdchat-account-reveal[data-open=true] .fdchat-settings> :nth-child(3){transition-delay:120ms}
+.fdchat-account-reveal[data-open=true] .fdchat-settings> :nth-child(4){transition-delay:145ms}
+.fdchat-account-reveal[data-open=true] .fdchat-settings> :nth-child(5){transition-delay:170ms}
+.fdchat .fdchat-sidebar{transition:flex-basis 320ms cubic-bezier(.22,1,.36,1),width 320ms cubic-bezier(.22,1,.36,1)}
+.fdchat-sidebar-tools button svg{transition:transform 260ms ease}
+.fdchat-sidebar-tools button[aria-expanded=true] svg{transform:rotate(90deg)}
+@media(prefers-reduced-motion:reduce){.fdchat-account-reveal,.fdchat .fdchat-sidebar,.fdchat-account-reveal .fdchat-settings> *,.fdchat-sidebar-tools button svg{transition:none!important}}
