@@ -5733,6 +5733,7 @@ fn spawn_test_process(
 
     configure_background_process(&mut command);
 
+    let local_map_bridge=chrome_map_bridge::LocalMapBridge::attach(&root,&mut command)?;
     let mut child = command
         .spawn()
         .map_err(|err| format!("Falha ao iniciar {error_context}: {err}"))?;
@@ -5755,7 +5756,7 @@ fn spawn_test_process(
         &root,
         format!("Processo iniciado com sucesso: {error_context}"),
     );
-    emit_log(app, format!("Processo iniciado: {error_context}."));
+    emit_log(app, format!("Processo iniciado: {error_context}. Ponte Chrome local preparada."));
 
     let app_handle = app.clone();
     let root_for_thread = root.clone();
@@ -5765,6 +5766,7 @@ fn spawn_test_process(
     let error_context_owned = error_context.to_string();
 
     thread::spawn(move || {
+        let _local_map_bridge=local_map_bridge;
         let stdout_thread = stdout.map(|stdout_pipe| {
             let app = app_handle.clone();
             let root = root_for_thread.clone();
