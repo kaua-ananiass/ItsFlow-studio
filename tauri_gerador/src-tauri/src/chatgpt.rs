@@ -29,7 +29,7 @@ fn save(dir:&Path,v:&Value)->Result<(),String>{
     fs::rename(tmp,target).map_err(|_|"Não foi possível salvar a conexão ChatGPT.".into())
 }
 fn sharing(v:&Value)->bool{v["scope"].as_str().unwrap_or("").split_whitespace().any(|s|s==SCOPE)}
-const PROFILE_FIELDS:&[&str]=&["client_id","sub","email","access_token","refresh_token","id_token","scope","expires_at"];
+const PROFILE_FIELDS:&[&str]=&["client_id","sub","email","access_token","refresh_token","id_token","scope","expires_at","reconnect_required"];
 fn remember_registration(v:&mut Value){
     let Some(id)=v["client_id"].as_str().filter(|s|!s.is_empty()&&*s!="dynamic_agent_client").map(String::from) else{return;};
     let mut profile=json!({});for key in PROFILE_FIELDS{if !v[*key].is_null(){profile[*key]=v[*key].clone();}}
@@ -45,15 +45,15 @@ fn selected_registration(v:&Value,id:&str)->Result<Value,String>{
 }
 fn public(v:&Value)->Value{
     let mut all=v.clone();remember_registration(&mut all);
-    let accounts:Vec<Value>=all["registrations"].as_array().into_iter().flatten().enumerate().map(|(index,p)|json!({"id":p["client_id"],"email":p["email"],"label":format!("Conta {} · {}",index+1,p["email"].as_str().unwrap_or("ChatGPT")),"connected":p["access_token"].is_string()})).collect();
-    json!({"connected":v["access_token"].as_str().is_some(),"sharing":sharing(v)&&v["access_token"].as_str().is_some(),"email":v["email"],"account":v["sub"],"client_id":v["client_id"],"accounts":accounts})
+    let accounts:Vec<Value>=all["registrations"].as_array().into_iter().flatten().enumerate().map(|(index,p)|json!({"id":p["client_id"],"email":p["email"],"label":format!("Conta {} · {}",index+1,p["email"].as_str().unwrap_or("ChatGPT")),"connected":p["access_token"].is_string()&&p["reconnect_required"]!=true})).collect();
+    json!({"connected":v["access_token"].as_str().is_some()&&v["reconnect_required"]!=true,"sharing":sharing(v)&&v["access_token"].as_str().is_some()&&v["reconnect_required"]!=true,"email":v["email"],"account":v["sub"],"client_id":v["client_id"],"accounts":accounts})
 }
 fn response_json(response:Response)->Result<Value,String>{
     let status=response.status();
     let request_id=response.headers().get("x-request-id").and_then(|s|s.to_str().ok()).unwrap_or("").to_string();
     let mut bytes=Vec::new();response.take(2_000_001).read_to_end(&mut bytes).map_err(|_|"Resposta OpenAI interrompida.")?;
     if bytes.len()>2_000_000{return Err("Resposta OpenAI excedeu o limite.".into());}
-    if !status.is_success(){let body:Value=serde_json::from_slice(&bytes).unwrap_or(json!({"detail":"O serviço retornou uma resposta fora do formato JSON."}));return Err(remote_failure(&body,&format!("HTTP {}",status.as_u16()),&request_id));}
+    if !status.is_success(){let body:Value=serde_json::from_slice(&bytes).unwrap_or_else(|_|json!({"detail":diagnostic_text(&String::from_utf8_lossy(&bytes))}));return Err(remote_failure(&body,&format!("HTTP {}",status.as_u16()),&request_id));}
     serde_json::from_slice(&bytes).map_err(|_|"Resposta OpenAI inválida.".into())
 }
 fn token(c:&Client,fields:&[(&str,&str)])->Result<Value,String>{response_json(c.post(format!("{AUTH}/api/accounts/oauth/token")).form(fields).send().map_err(|_|"Não foi possível renovar/concluir o login. Tente conectar novamente.")?)}
@@ -70,12 +70,22 @@ fn verified_identity(c:&Client,raw:&str,audience:&str,nonce:&str)->Result<Value,
 fn install_tokens(v:&mut Value,t:&Value)->Result<(),String>{
     if t["access_token"].as_str().unwrap_or("").is_empty(){return Err("OpenAI não retornou autorização de acesso.".into());}
     for k in ["access_token","refresh_token","id_token","scope"] {if t[k].is_string(){v[k]=t[k].clone();}}
+    v["reconnect_required"]=json!(false);
     v["expires_at"]=json!(now()+t["expires_in"].as_u64().unwrap_or(3600));Ok(())
 }
 fn access(c:&Client,dir:&Path,v:&mut Value)->Result<String,String>{
+    if v["reconnect_required"]==true{return Err("CHATGPT_RECONNECT_REQUIRED: Reconecte a conta ChatGPT para renovar a autorização de acesso.".into());}
     if !sharing(v){return Err("Conecte e autorize o uso do plano ChatGPT para gerar blocos.".into());}
     if v["expires_at"].as_u64().unwrap_or(0)<=now()+60 {
-        let t=token(c,&[("grant_type","refresh_token"),("client_id",v["client_id"].as_str().ok_or("Conecte novamente.")?),("refresh_token",v["refresh_token"].as_str().ok_or("Conecte novamente ao ChatGPT.")?),("resource",RESOURCE)])?;
+        let t=token(c,&[("grant_type","refresh_token"),("client_id",v["client_id"].as_str().ok_or("Conecte novamente.")?),("refresh_token",v["refresh_token"].as_str().ok_or("Conecte novamente ao ChatGPT.")?),("resource",RESOURCE)]).map_err(|error|{
+            // A rejected grant cannot be repaired by repeating the same token.
+            // Keep account identity/history, and require a new browser sign-in.
+            if error.contains("Código: invalid_grant")||error.contains("Código: invalid_client"){
+                v["reconnect_required"]=json!(true);
+                let _=save(dir,v);
+            }
+            error
+        })?;
         install_tokens(v,&t)?;save(dir,v)?;
     }
     Ok(v["access_token"].as_str().ok_or("Conecte novamente ao ChatGPT.")?.into())
@@ -156,7 +166,7 @@ pub fn action_with_stream(dir:&Path,request:Value,mut on_delta:impl FnMut(&str))
         "select_account"=>{
             let id=request["account_id"].as_str().ok_or("Selecione uma conta salva.")?;
             let selected=selected_registration(&v,id)?;
-            if !selected["access_token"].is_string(){return login(dir,&c,selected,false);}
+            if !selected["access_token"].is_string()||selected["reconnect_required"]==true{return login(dir,&c,selected,false);}
             save(dir,&selected)?;Ok(public(&selected))
         },
         "logout"=>{
@@ -189,7 +199,9 @@ pub fn action_with_stream(dir:&Path,request:Value,mut on_delta:impl FnMut(&str))
             let response=c.post(format!("{RESOURCE}/responses")).bearer_auth(a).json(&json!({"model":model,"store":false,"stream":true,"instructions":instructions,"input":input})).send().map_err(|_|"A conexão com ChatGPT foi interrompida. Nenhum bloco foi alterado.")?;
             if !response.status().is_success(){
                 let status=response.status().as_u16();let request_id=response.headers().get("x-request-id").and_then(|s|s.to_str().ok()).unwrap_or("").to_string();
-                let body:Value=response.json().unwrap_or(Value::Null);
+                // Keep the same bounded error decoder used by login/models. In
+                // particular, do not discard text or structured detail errors.
+                let body=response_json(response)?;
                 return Err(remote_failure(&body,&format!("HTTP {status}"),&request_id));
             }
             let request_id=response.headers().get("x-request-id").and_then(|s|s.to_str().ok()).unwrap_or("").to_string();
@@ -233,13 +245,14 @@ fn diagnostic_text(text:&str)->String{
     text.split_whitespace().map(|s|if s.starts_with("eyJ")||s.starts_with("sk-")||s.len()>200 {"[dado omitido]"}else{s}).collect::<Vec<_>>().join(" ").chars().take(1200).collect()
 }
 fn remote_failure(v:&Value,event:&str,request_id:&str)->String{
-    let error=if v["response"]["error"].is_object(){&v["response"]["error"]}else if v["error"].is_object(){&v["error"]}else{v};
-    let code=error["code"].as_str().unwrap_or("");
+    let error=if v["response"]["error"].is_object(){&v["response"]["error"]}else if v["error"].is_object(){&v["error"]}else if v["detail"].is_object(){&v["detail"]}else{v};
+    let code=error["code"].as_str().or(v["error"].as_str()).unwrap_or("");
     let reason=v["response"]["incomplete_details"]["reason"].as_str().or(v["incomplete_details"]["reason"].as_str()).unwrap_or("");
-    let message=error["message"].as_str().or(v["detail"].as_str()).unwrap_or("");
+    let message=error["message"].as_str().or(v["detail"].as_str()).or(v["error"].as_str()).or(v.as_str()).unwrap_or("");
     let param=error["param"].as_str().unwrap_or("");
     let response_id=v["response"]["id"].as_str().unwrap_or("");
     let explanation=match code {
+        "invalid_grant"|"invalid_client"=>"A autorização salva do ChatGPT não é mais válida. Abra a área da conta e clique em Reconectar. Suas conversas e automações serão preservadas.",
         "subscription_sharing_usage_limit_exceeded"=>"O limite de uso autorizado para o aplicativo foi atingido. Confira o uso do FlowDetect nas configurações do ChatGPT.",
         "subscription_sharing_user_not_eligible"=>"O uso do plano não está disponível para esta conta ou workspace.",
         "subscription_sharing_unsupported_capability"=>"A solicitação contém um recurso que esta conexão não suporta.",
@@ -317,6 +330,21 @@ fn read_events_stream(mut reader:impl BufRead,request_id:&str,mut on_delta:impl 
         let flat=remote_failure(&json!({"type":"error","code":null,"message":"A model error occurred"}),"error","");assert!(flat.contains("A model error occurred"));
         let admission=remote_failure(&json!({"detail":"Direct routing unavailable"}),"HTTP 503","");assert!(admission.contains("Direct routing unavailable"));
         let quota=read_events_identified(b"data: {\"type\":\"error\",\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\",\"message\":\"Subscription Sharing usage limit\"}}\n\n".as_slice(),"req_quota").unwrap_err();assert!(quota.contains("limite de uso autorizado"));assert!(quota.contains("subscription_sharing_usage_limit_exceeded"));assert!(quota.contains("req_quota"));
+    }
+    #[test] fn expired_grant_requires_reconnection_and_new_login_restores_status(){
+        let error=remote_failure(&json!({"error":"invalid_grant"}),"HTTP 400","req_grant");
+        assert!(error.contains("Reconectar"));assert!(error.contains("Código: invalid_grant"));
+        let mut account=json!({"client_id":"issued-client","access_token":"secret","refresh_token":"private","scope":SCOPE,"reconnect_required":true});
+        assert_eq!(public(&account)["connected"],false);assert_eq!(public(&account)["sharing"],false);
+        assert_eq!(public(&account)["accounts"][0]["connected"],false);
+        install_tokens(&mut account,&json!({"access_token":"renewed","scope":SCOPE})).unwrap();
+        assert_eq!(public(&account)["connected"],true);assert_eq!(public(&account)["sharing"],true);
+    }
+    #[test] fn preserves_structured_detail_and_string_errors(){
+        let detail=remote_failure(&json!({"detail":{"code":"invalid_request_error","message":"Model not supported","param":"model"}}),"HTTP 400","req_detail");
+        assert!(detail.contains("Model not supported"));assert!(detail.contains("model"));
+        let text=remote_failure(&json!({"error":"Malformed request"}),"HTTP 400","req_text");assert!(text.contains("Malformed request"));
+        let safe=diagnostic_text("Bearer sk-secret eyJprivate");assert!(!safe.contains("sk-secret"));assert!(!safe.contains("eyJprivate"));
     }
     #[test]
     #[ignore = "Requires explicit local diagnostic opt-in and the user's existing FlowDetect sign-in"]
