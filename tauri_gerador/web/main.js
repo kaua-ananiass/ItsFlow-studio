@@ -293,7 +293,7 @@ const state = {
     success: null,
     logs: [],
   },
-  assistControlTab: "target",
+  assistControlTab: "pages",
   editableTextOverrides: {},
   assistTarget: {
     enabled: false,
@@ -2539,9 +2539,9 @@ function getAssistCurrentSequence() {
   return resolveRoadmapInitialSequence();
 }
 
-function setAssistControlTab(tabName = "target") {
+function setAssistControlTab(tabName = "pages") {
   const requestedTab = String(tabName || "").trim().toLowerCase();
-  const nextTab = ["target", "pages", "texts"].includes(requestedTab) ? requestedTab : "target";
+  const nextTab = ["pages", "texts"].includes(requestedTab) ? requestedTab : "pages";
   state.assistControlTab = nextTab;
 
   document.querySelectorAll("[data-assist-control-tab]").forEach((button) => {
@@ -3581,8 +3581,15 @@ function updateAssistProgressUI() {
         : assist.mode === "stopped"
           ? "Execucao interrompida pelo launcher."
           : "Modo assistido pronto para acompanhar a execucao.";
-  assistPercentText.textContent = `${Math.round(assist.percent || 0)}%`;
-  assistProgressFill.style.width = `${Math.max(0, Math.min(100, assist.percent || 0))}%`;
+  const rawPercent=Number(assist.percent)||0;
+  const percent=Number.isFinite(rawPercent)?Math.max(0,Math.min(100,rawPercent)):0;
+  assistPercentText.textContent = `${Math.round(percent)}%`;
+  assistProgressFill.style.width = `${percent}%`;
+  const progress=assistProgressFill.closest('.assist-execution-progress');
+  if(progress){progress.dataset.mode=assist.mode||'idle';progress.dataset.hasProgress=String(percent>0);}
+  const track=assistProgressFill.parentElement;
+  track.setAttribute('aria-valuenow',String(Math.round(percent)));
+  track.setAttribute('aria-valuetext',`${Math.round(percent)}% · ${assistStatusText.textContent}`);
   assistProgressMeta.textContent =
     assist.total > 0 ? `${assist.current}/${assist.total} passos observados.` : "Nenhum passo em execucao.";
 }
@@ -3674,98 +3681,135 @@ function centerFirstAssistOrder(behavior = "auto") {
   centerAssistOrder(firstAssistOrder, behavior);
 }
 
+const assistCanvasView = {x:0,y:0,scale:1,drag:null,initialized:false,order:null,frame:0};
+function applyAssistCanvasView(){
+  const stage=assistMapList?.querySelector('.assist-canvas-stage');
+  if(stage)stage.style.transform=`translate(${assistCanvasView.x}px,${assistCanvasView.y}px) scale(${assistCanvasView.scale})`;
+}
+assistMapList?.addEventListener('pointerdown',event=>{
+  if(event.button!==0)return;
+  event.preventDefault();event.stopPropagation();
+  assistCanvasView.drag={x:event.clientX,y:event.clientY,panX:assistCanvasView.x,panY:assistCanvasView.y};
+  assistMapList.setPointerCapture(event.pointerId);assistMapList.classList.add('is-panning');
+});
+assistMapList?.addEventListener('pointermove',event=>{
+  const drag=assistCanvasView.drag;if(!drag)return;
+  event.preventDefault();
+  assistCanvasView.x=commandMapTreePanCoordinate(drag.panX,event.clientX-drag.x);
+  assistCanvasView.y=commandMapTreePanCoordinate(drag.panY,event.clientY-drag.y);
+  if(!assistCanvasView.frame)assistCanvasView.frame=requestAnimationFrame(()=>{assistCanvasView.frame=0;applyAssistCanvasView();});
+});
+for(const type of ['pointerup','pointercancel','lostpointercapture'])assistMapList?.addEventListener(type,()=>{assistCanvasView.drag=null;assistMapList.classList.remove('is-panning');});
+assistMapList?.addEventListener('wheel',event=>{
+  if(!event.deltaY)return;
+  event.preventDefault();
+  const rect=assistMapList.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;
+  const next=normalizeCommandMapZoom(assistCanvasView.scale*commandMapWheelZoomFactor(event.deltaY,event.deltaMode),assistCanvasView.scale);
+  const ratio=next/assistCanvasView.scale;
+  assistCanvasView.x=commandMapTreePanCoordinate(x,-(x-assistCanvasView.x)*ratio);
+  assistCanvasView.y=commandMapTreePanCoordinate(y,-(y-assistCanvasView.y)*ratio);
+  assistCanvasView.scale=next;applyAssistCanvasView();
+},{passive:false});
+
+function syncAssistAutomationName() {
+  const label=document.getElementById('assistAutomationName');
+  if(!label)return;
+  const active=state.library.items.find(item=>item.id===state.library.activeId);
+  const name=active?.nome||exportNameInput.value||'Nenhuma automação aberta';
+  label.textContent=name;label.title=name;
+}
+function setAssistMenuOpen(open,restoreFocus=false){
+  const menu=document.getElementById('assistMenu'),toggle=document.getElementById('assistMenuToggle');
+  if(!menu||!toggle)return;
+  assistPanel.classList.toggle('is-menu-open',open);
+  menu.inert=!open;menu.setAttribute('aria-hidden',String(!open));
+  toggle.setAttribute('aria-expanded',String(open));
+  toggle.setAttribute('aria-label',open?'Fechar menu da execução':'Abrir menu da execução');
+  if(restoreFocus)toggle.focus();
+}
+
 function renderAssistExecutionMap() {
-  const currentSequence = getAssistCurrentSequence();
-  const events = getCommandMapEvents(currentSequence);
-  const fallbackEvents = getAssistRoadmapEvents();
-  const visibleEvents = events.length ? events : fallbackEvents;
-  syncAssistTheme();
-  assistMapList.innerHTML = "";
-
-  if (!visibleEvents.length) {
-    assistMapList.innerHTML = `<div class="empty-state">Adicione blocos ao roteiro para acompanhar a execucao assistida aqui.</div>`;
-    return;
-  }
-
-  const hasKnownCurrentOrder = visibleEvents.some((event) => Number(event.order) === Number(state.assist.currentOrder));
-  const isRunningAssist = state.assist.mode === "running";
-  if (state.assist.mode === "idle" || !hasKnownCurrentOrder) {
-    state.assist.currentOrder = visibleEvents[0]?.order ?? getAssistInitialOrder() ?? null;
-  }
-
-  const activeOrder = state.assist.currentOrder;
-  const activeIndex = visibleEvents.findIndex((event) => Number(event.order) === Number(activeOrder));
-  const hasProgress = activeIndex >= 0 && state.assist.mode !== "idle";
-  const leadingSpacer = `<div class="assist-edge-spacer is-start" aria-hidden="true"></div>`;
-  const trailingSpacer = `<div class="assist-edge-spacer is-end" aria-hidden="true"></div>`;
-
-  const markup = visibleEvents
-    .map((event, index) => {
-      const isDone = hasProgress && index < activeIndex;
-      const isCurrent = activeIndex >= 0 ? index === activeIndex : index === 0;
-      const stateClass = isCurrent ? "is-current" : isDone ? "is-done" : "is-upcoming";
-      const connectorClass =
-        hasProgress && index < activeIndex
-          ? "is-done"
-          : hasProgress && index === activeIndex - 1
-            ? "is-current"
-            : "is-upcoming";
-
-      const card = `
-        <article class="assist-card ${stateClass}" data-assist-order="${Number(event.order)}">
-          <div class="assist-card-top">
-            <span class="assist-card-index">${String(event.order).padStart(2, "0")}</span>
-            <span class="assist-card-chip">${escapeHtml(event.type.replaceAll("_", " "))}</span>
-          </div>
-          <h3>${escapeHtml(event.title)}</h3>
-          <p>${escapeHtml(event.subtitle)}</p>
-        </article>
-      `;
-
-      if (index === visibleEvents.length - 1) {
-        return `${card}<div class="assist-end ${state.assist.mode === "done" ? "is-done" : ""}">Fim</div>`;
-      }
-
-      return `
-        ${card}
-        <div class="assist-connector ${connectorClass}">
-          <span></span>
-        </div>
-      `;
-    })
-    .join("");
-
-  assistMapList.innerHTML = `<div class="assist-flow-row">${leadingSpacer}${markup}${trailingSpacer}</div>`;
-  requestAnimationFrame(() => {
-    syncAssistEdgeSpacers();
-    if (state.assist.mode === "running" && state.assist.currentOrder != null) {
-      centerAssistOrder(state.assist.currentOrder, "smooth");
-      return;
+  syncAssistAutomationName();
+  const events=getAssistRoadmapEvents();syncAssistTheme();
+  if(!events.length){assistMapList.innerHTML='<div class="empty-state">Adicione blocos ao roteiro para acompanhar a execução.</div>';assistCanvasView.initialized=false;return;}
+  const sequences=[...new Set(events.map(event=>normalizeSequenceName(event.sequence)))];
+  const context={orderToEvent:new Map(events.map(e=>[Number(e.order),e])),orderToIndex:new Map(events.map((e,i)=>[Number(e.order),i])),seen:new Set()};
+  const columns=new Map();
+  const nodes=events.map((event,index)=>{const sequence=normalizeSequenceName(event.sequence),column=columns.get(sequence)||0;columns.set(sequence,column+1);return {event,index,order:Number(event.order),x:48+column*320,y:72+sequences.indexOf(sequence)*560};});
+  const byOrder=new Map(nodes.map(n=>[n.order,n]));
+  if(!byOrder.has(Number(state.assist.currentOrder)))state.assist.currentOrder=nodes[0].order;
+  const activeIndex=events.findIndex(e=>Number(e.order)===Number(state.assist.currentOrder));
+  const width=Math.max(700,...nodes.map(n=>n.x+300)),height=sequences.length*560+30;
+  const paths=[];
+  for(const node of nodes){
+    for(const branch of buildCommandMapTreeBranches(node.event,node.index,events,context)){
+      const target=byOrder.get(Number(branch.targetEvent?.order||branch.targetOrder));
+      if(!target||normalizeSequenceName(target.event.sequence)!==normalizeSequenceName(node.event.sequence))continue;
+      const x=node.x+236,y=node.y+160,tx=target.x,ty=target.y+160;
+      const bend=Math.max(50,Math.abs(tx-x)*.45);
+      paths.push(`<path class="assist-route is-${escapeHtml(branch.kind||'success')}" data-route-kind="${escapeHtml(branch.kind||'success')}" data-source="${node.order}" data-target="${target.order}" d="M${x} ${y} C${x+bend} ${y},${tx-bend} ${ty},${tx} ${ty}"/>`);
     }
-    centerFirstAssistOrder("auto");
+  }
+  const sections=sequences.map((sequence,index)=>{const lane=(state.roadmap?.map_paths||[]).find(p=>(p.sequences||[]).includes(sequence));return `<div class="assist-section-label" style="left:48px;top:${index*560+30}px">${escapeHtml(lane?.name||sequence)}<small>${lane?.engine==='chrome'?'Chrome':'Desktop'}</small></div>`;}).join('');
+  const cards=nodes.map(({event,index,order,x,y})=>{
+    const current=order===Number(state.assist.currentOrder),done=state.assist.mode!=='idle'&&index<activeIndex;
+    // Use the command map's actual compact card renderer, without editing controls.
+    const template=document.createElement('template');
+    template.innerHTML=renderCommandMapCardSegment(event,index,events,{treeNode:true});
+    const card=template.content.querySelector('.command-tree-card');
+    if(!card)return '';
+    card.classList.remove('is-inline-expanded');
+    card.querySelectorAll('.command-tree-actions,.command-tree-side,.tree-command-preview,button,[data-drag-handle]').forEach(el=>el.remove());
+    card.querySelectorAll('input,textarea,select').forEach(el=>{el.disabled=true;el.tabIndex=-1;});
+    card.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
+    card.querySelectorAll('[draggable]').forEach(el=>el.removeAttribute('draggable'));
+    card.classList.add('assist-map-card');
+    const grid=card.querySelector('.command-tree-grid');
+    const image=card.querySelector('[data-recognition-preview-card]');
+    if(['clicar_imagem','procurar_texto_ocr'].includes(event.type)){
+      if(grid){grid.replaceChildren();if(image)grid.append(image);}
+    }else if(event.type==='texto_livre'||event.type==='tecla'||event.type==='atalho'){
+      const value=document.createElement('div');value.className='assist-essential-value';
+      value.textContent=event.type==='texto_livre'?String(event.text||''):(event.keys||[]).join(' + ');
+      if(grid)grid.replaceChildren(value);
+    }
+    card.querySelectorAll('input,textarea,select,.recognition-test-status,.recognition-validation-panel').forEach(el=>el.remove());
+    card.setAttribute('aria-label',`Bloco ${order}: ${event.title||event.type}`);
+    return `<div class="assist-real-node ${current?'is-current':done?'is-done':'is-upcoming'}" data-assist-order="${order}" data-canvas-x="${x}" data-canvas-y="${y}" style="left:${x}px;top:${y}px">${card.outerHTML}</div>`;
+  }).join('');
+  assistMapList.innerHTML=`<div class="assist-canvas-stage" style="width:${width}px;height:${height}px">${sections}<svg class="assist-canvas-routes" width="${width}" height="${height}" aria-label="Caminhos entre os blocos">${paths.join('')}</svg>${cards}</div><span class="assist-canvas-hint">Arraste o fundo para navegar · Role para ampliar</span>`;
+  const routes=assistMapList.querySelector('.assist-canvas-routes');
+  routes?.querySelectorAll('.assist-route').forEach(path=>{
+    const source=assistMapList.querySelector(`[data-assist-order="${path.dataset.source}"]`);
+    const target=assistMapList.querySelector(`[data-assist-order="${path.dataset.target}"]`);
+    if(source&&target){
+      const x=Number(source.dataset.canvasX)+236,y=Number(source.dataset.canvasY)+source.offsetHeight/2;
+      const tx=Number(target.dataset.canvasX),ty=Number(target.dataset.canvasY)+target.offsetHeight/2;
+      const bend=Math.max(50,Math.abs(tx-x)*.45);
+      path.setAttribute('d',`M${x} ${y} C${x+bend} ${y},${tx-bend} ${ty},${tx} ${ty}`);
+    }
+    const energy=createCommandMapTreeLinkEnergy(path.getAttribute('d'),path.dataset.routeKind);
+    if(energy)routes.append(energy);
+  });
+  hydrateRecognitionPreviewCards(assistMapList);
+  applyAssistCanvasView();
+  requestAnimationFrame(()=>{
+    if(!assistCanvasView.initialized){
+      assistCanvasView.scale=Math.max(.35,Math.min(.9,(assistMapList.clientWidth-160)/width,(assistMapList.clientHeight-220)/height));
+      assistCanvasView.x=(assistMapList.clientWidth-width*assistCanvasView.scale)/2;
+      assistCanvasView.y=(assistMapList.clientHeight-height*assistCanvasView.scale)/2;
+      assistCanvasView.initialized=true;applyAssistCanvasView();
+    }else if(state.assist.mode==='running'&&assistCanvasView.order!==state.assist.currentOrder&&!assistCanvasView.drag)centerAssistOrder(state.assist.currentOrder);
+    assistCanvasView.order=state.assist.currentOrder;
   });
 }
 
-function centerAssistOrder(order, behavior = "smooth") {
-  if (!assistMapList || order == null) {
-    return;
-  }
-
-  const target = assistMapList.querySelector(`[data-assist-order="${Number(order)}"]`);
-  if (!target) {
-    return;
-  }
-
-  const containerRect = assistMapList.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const currentScrollLeft = assistMapList.scrollLeft;
-  const delta = (targetRect.left + targetRect.width / 2) - (containerRect.left + containerRect.width / 2);
-  const left = Math.max(0, currentScrollLeft + delta);
-
-  assistMapList.scrollTo({
-    left,
-    behavior,
-  });
+function centerAssistOrder(order, behavior = 'smooth') {
+  const target=assistMapList?.querySelector(`[data-assist-order="${Number(order)}"]`);if(!target)return;
+  const x=Number(target.dataset.canvasX),y=Number(target.dataset.canvasY);
+  assistCanvasView.x=assistMapList.clientWidth/2-(x+118)*assistCanvasView.scale;
+  assistCanvasView.y=assistMapList.clientHeight/2-(y+145)*assistCanvasView.scale;
+  applyAssistCanvasView();
 }
 
 function resetAssistState(mode = "idle") {
@@ -13733,6 +13777,7 @@ function filteredAutomationItems() {
 }
 
 function renderLauncherLibrary() {
+  syncAssistAutomationName();
   if (!launcherList) {
     return;
   }
@@ -24305,6 +24350,11 @@ assistSequenceModeList?.addEventListener("change", (event) => {
     setMessage(String(error), "error");
   });
 });
+
+document.getElementById('assistMenuToggle')?.addEventListener('click',()=>setAssistMenuOpen(!assistPanel.classList.contains('is-menu-open')));
+document.getElementById('assistMenuClose')?.addEventListener('click',()=>setAssistMenuOpen(false,true));
+assistPanel?.addEventListener('keydown',event=>{if(event.key==='Escape'&&assistPanel.classList.contains('is-menu-open')){event.preventDefault();event.stopPropagation();setAssistMenuOpen(false,true);}});
+exportNameInput?.addEventListener('input',syncAssistAutomationName);
 
 assistControlTabs?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-assist-control-tab]");

@@ -592,11 +592,16 @@
         <section class="assist-shell">
           <header class="assist-header">
             <div class="assist-copy">
-              <p class="panel-kicker">Execucao guiada</p>
-              <h2>Acompanhe a automacao passando pelos blocos</h2>
-              <p class="timeline-meta">Execute o fluxo e veja a trilha acender em verde em tempo real.</p>
+              <div class="assist-heading-row">
+                <button id="assistMenuToggle" class="assist-menu-toggle" type="button" aria-label="Abrir menu da execução" aria-controls="assistMenu" aria-expanded="false" title="Menu da execução"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+                <div class="assist-heading-text"><h2>Execução assistida</h2><p>Acompanhe seu fluxo</p></div>
+              </div>
+              <p class="assist-automation-label">Automação · <strong id="assistAutomationName">Nenhuma automação aberta</strong></p>
             </div>
-            <div class="assist-actions">
+            <div class="assist-run-toolbar">
+              <details class="assist-run-settings">
+                <summary aria-label="Configurar execução" title="Configurar execução"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6" stroke-linecap="round"/></svg></summary>
+                <div class="assist-run-settings-popover">
               <label>
                 <span>Atraso inicial</span>
                 <input id="assistDelayInput" type="number" min="0" step="0.5" value="3" />
@@ -612,16 +617,18 @@
                   <option value="minimize" selected>Minimizar ao executar</option>
                 </select>
               </label>
-              <button id="assistQuickButton" class="soft-button" type="button">Executar</button>
+                </div>
+              </details>
+              <button id="assistQuickButton" class="soft-button" type="button">Iniciar</button>
               <button id="assistStopButton" class="danger-button" type="button">Parar</button>
             </div>
           </header>
 
-          <section class="assist-status-strip">
+          <section class="assist-status-strip" hidden aria-hidden="true">
             <article class="assist-status-card">
               <span class="stat-label">Status</span>
-              <strong id="assistStatusText">Pronto</strong>
-              <p id="assistDetailText" class="assist-detail">Aguardando inicio da execucao.</p>
+              <strong data-retired-status="true">Pronto</strong>
+              <p data-retired-detail="true" class="assist-detail">Aguardando inicio da execucao.</p>
             </article>
             <article class="assist-status-card">
               <span class="stat-label">Origem</span>
@@ -638,47 +645,31 @@
               <strong id="assistCompanyText">-</strong>
               <p id="assistModeText" class="assist-detail">Modo assistido pronto para acompanhar a execucao.</p>
             </article>
-            <article class="assist-status-card progress">
-              <div class="assist-progress-top">
-                <span class="stat-label">Progresso</span>
-                <strong id="assistPercentText">0%</strong>
-              </div>
-              <div class="assist-progress-track">
-                <div id="assistProgressFill" class="assist-progress-fill"></div>
-              </div>
-              <p id="assistProgressMeta" class="assist-detail">Nenhum passo em execucao.</p>
-            </article>
+
           </section>
 
           <section class="assist-body">
-            <div id="assistMapList" class="assist-map-list"></div>
+            <div class="assist-execution-focus"><div id="assistMapList" class="assist-map-list"></div>            <article class="assist-execution-progress" data-mode="idle" data-has-progress="false">
+              <div class="assist-progress-top">
+                <span class="assist-progress-caption"><strong id="assistStatusText">Pronto</strong><span id="assistDetailText">Aguardando início da execução.</span></span>
+                <strong id="assistPercentText">0%</strong>
+              </div>
+              <div class="assist-progress-track" role="progressbar" aria-label="Progresso da automação" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="assistProgressFill" class="assist-progress-fill"><span class="assist-progress-tip" aria-hidden="true"><svg viewBox="0 0 24 30" fill="none"><path d="M14.5 2 4 17h8l-2.5 11L21 12h-8L14.5 2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" fill="currentColor" fill-opacity=".12"/></svg></span></div>
+              </div>
+              <p id="assistProgressMeta" class="assist-detail">Nenhum passo em execucao.</p>
+            </article></div>
 
-            <aside class="assist-side-stack">
-              <section class="assist-control-dock">
+            <aside id="assistMenu" class="assist-side-stack" aria-label="Menu da execução" aria-hidden="true" inert>
+              <div class="assist-menu-heading"><strong>Opções da execução</strong><button id="assistMenuClose" type="button" aria-label="Fechar menu da execução"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
+              <details class="assist-control-dock"><summary>Páginas e textos</summary>
                 <div id="assistControlTabs" class="assist-control-tabs" role="tablist" aria-label="Controles da execucao assistida">
-                  <button class="assist-control-tab is-active" type="button" data-assist-control-tab="target" aria-pressed="true">Janela alvo</button>
-                  <button class="assist-control-tab" type="button" data-assist-control-tab="pages" aria-pressed="false">Paginas</button>
+                  <button class="assist-control-tab is-active" type="button" data-assist-control-tab="pages" aria-pressed="true">Páginas</button>
                   <button class="assist-control-tab" type="button" data-assist-control-tab="texts" aria-pressed="false">Textos</button>
                 </div>
 
                 <div class="assist-control-panels">
-                  <section class="assist-target-panel assist-control-panel is-active" data-assist-control-panel="target">
-                    <div class="assist-target-copy">
-                      <span class="stat-label">Janela alvo</span>
-                      <strong id="assistTargetTitle">Nenhuma janela selecionada</strong>
-                      <p id="assistTargetDetailText" class="assist-detail">Selecione uma janela aberta antes de executar quando quiser travar a automacao em um alvo especifico.</p>
-                    </div>
-                    <div class="assist-target-status-block">
-                      <span id="assistTargetStatusChip" class="assist-target-status-chip is-idle">Nenhuma janela selecionada</span>
-                      <div id="assistTargetMetaText" class="assist-target-meta">Sem hwnd ativo para esta execucao.</div>
-                    </div>
-                    <div class="assist-target-actions">
-                      <button id="assistSelectWindowButton" class="primary-button" type="button">Selecionar janela</button>
-                      <button id="assistClearWindowButton" class="ghost-button" type="button">Limpar alvo</button>
-                    </div>
-                  </section>
-
-                  <section class="assist-sequence-strip assist-control-panel" data-assist-control-panel="pages" hidden>
+                  <section class="assist-sequence-strip assist-control-panel is-active" data-assist-control-panel="pages">
                     <div class="assist-sequence-start">
                       <span class="stat-label">Inicio da automacao</span>
                       <select id="assistInitialSequenceSelect" aria-label="Pagina inicial da automacao"></select>
@@ -698,15 +689,15 @@
                     <div id="assistEditableTextList" class="assist-editable-text-list"></div>
                   </section>
                 </div>
-              </section>
+              </details>
 
-              <section class="assist-log-panel">
+              <details class="assist-log-panel"><summary>Log da execução</summary>
                 <div class="assist-log-header">
                   <span class="stat-label">Log da execucao</span>
                   <strong>Tempo real</strong>
                 </div>
                 <div id="assistLogList" class="assist-log-list"></div>
-              </section>
+              </details>
             </aside>
           </section>
         </section>
