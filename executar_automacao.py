@@ -1074,6 +1074,10 @@ class ExecutorAutomacao:
         return janela
 
     def preparar_janela_para_acao(self, titulo_janela=None, priorizar_evento=False):
+        if (getattr(self, '_desktop_tela_livre', False)
+                and getattr(self, '_desktop_bloco_sem_alvo', False)
+                and not titulo_janela and not self.janela_alvo and not self.alvo_execucao_ativo()):
+            return None  # Keep the focus acquired by the desktop click, not an inherited browser title.
         titulo = str(
             self.resolver_janela_evento(
                 titulo_janela,
@@ -2669,8 +2673,10 @@ class ExecutorAutomacao:
             return None
         try:
             esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-            margem_x = max(16, min(32, int(round(largura * 0.08))))
-            margem_y = max(8, min(16, int(round(altura * 0.18))))
+            # A single OCR anchor fixes the center, but cannot measure scale.
+            # Leave room for the same control at another monitor's DPI.
+            margem_x = max(24, min(120, int(round(largura * 0.55))))
+            margem_y = max(16, min(64, int(round(altura * 0.55))))
             regiao = self.limitar_regiao(
                 (esquerda - margem_x, topo - margem_y,
                  largura + 2 * margem_x, altura + 2 * margem_y),
@@ -2688,8 +2694,11 @@ class ExecutorAutomacao:
                 return None
             escala_base = largura / max(1.0, float(ref_w))
             melhor = None
-            for fator in (1.0, 0.97, 1.03, 0.9, 1.1):
+            variantes_bordas = []
+            for fator in (1.0, 0.97, 1.03, 0.9, 1.1, 0.8, 1.25, 1.5, 1.75, 2.0):
                 escala = escala_base * fator
+                if not 0.50 <= escala <= 2.00:
+                    continue
                 w = max(1, int(round(ref_w * escala)))
                 h = max(1, int(round(ref_h * escala)))
                 if w > tela.shape[1] or h > tela.shape[0]:
@@ -2698,12 +2707,26 @@ class ExecutorAutomacao:
                 bordas_ref = cv2.Canny(ref_escalada, 30, 100)
                 if cv2.countNonZero(bordas_ref) < 35:
                     continue
+                variantes_bordas.append((bordas_ref,w,h,escala))
                 mapa = cv2.matchTemplate(bordas_tela, bordas_ref, cv2.TM_CCOEFF_NORMED)
                 _minimo, score, _pos_min, pos = cv2.minMaxLoc(mapa)
                 if melhor is None or float(score) > melhor[0]:
                     melhor = (float(score), int(base_left) + pos[0], int(base_top) + pos[1], w, h, escala)
             if not melhor or melhor[0] < 0.55:
-                return None
+                # Different DPI/selection antialiasing moves glyph edges by a
+                # pixel. Only after exact edges fail, compare softened edges
+                # with a stricter score; text is still rechecked by the caller.
+                suave_tela=cv2.GaussianBlur(bordas_tela,(3,3),0)
+                melhor_suave=None
+                for bordas_ref,w,h,escala in variantes_bordas:
+                    suave_ref=cv2.GaussianBlur(bordas_ref,(3,3),0)
+                    mapa=cv2.matchTemplate(suave_tela,suave_ref,cv2.TM_CCOEFF_NORMED)
+                    _min,score,_pos_min,pos=cv2.minMaxLoc(mapa)
+                    if score>=0.72 and (melhor_suave is None or score>melhor_suave[0]):
+                        melhor_suave=(float(score),int(base_left)+pos[0],int(base_top)+pos[1],w,h,escala)
+                if not melhor_suave:
+                    return None
+                melhor=melhor_suave
             score, x, y, w, h, escala = melhor
             return {
                 "left": x, "top": y, "width": w, "height": h,
@@ -5297,7 +5320,12 @@ class ExecutorAutomacao:
             # A escala vem da geometria dos OCRs confirmados. Mesmo no perfil
             # rapido testamos quatro ajustes proximos: isso cobre DPI/zoom de
             # outra maquina sem esperar o timeout mudar para "balanced".
-            escalas_fallback = escalas_guiadas_por_ocr
+            # With only one text anchor, the estimate is 1.0 even when the
+            # live control is rendered at 125/150% DPI. Do not replace all
+            # broader scales with tiny adjustments around that estimate.
+            escalas_fallback = tuple(dict.fromkeys(
+                (*escalas_guiadas_por_ocr, *escalas_fallback, 1.25, 1.5, 1.75, 2.0)
+            ))
 
         limite_escala_minima = 0.50 if escala_referencia is not None else 0.75
         limite_escala_maxima = 2.00 if escala_referencia is not None else 1.35
@@ -9666,6 +9694,8 @@ class ExecutorAutomacao:
         ultima_falha = None
         ultima_tentativa_ocr = 0.0
         ocr_hibrido_pendente = {}
+        fluxo_ocr_pendente = None
+        chave_janela_desktop = None
         ultima_ativacao_janela = 0.0
         self._ultima_regiao_reconhecimento = None
         self._ultimo_template_debug = None
@@ -9896,9 +9926,25 @@ class ExecutorAutomacao:
                 adicionar_regiao_busca(regioes_busca, None, "screen", fallback=True)
 
             if busca_desktop_livre:
-                # The Windows taskbar lies outside a maximized browser's bounds.
-                # Search actual desktop pixels, including taskbar and other apps.
-                regioes_busca=[{'region':tuple(self.obter_metricas_tela_virtual()),'stage':'desktop_screen','fallback':False}]
+                # Follow the visible desktop app just as Procurar does. Refresh
+                # each cycle because Enter may still be opening Explorer.
+                # Keep the full desktop as a fallback for taskbar/other monitors.
+                regioes_busca=[]
+                ativa=self.obter_janela_ativa()
+                if (isinstance(ativa,dict) and not self.janela_parece_interface_flowdetect(ativa)
+                        and int(ativa.get('width',0) or 0)>=260
+                        and int(ativa.get('height',0) or 0)>=180):
+                    area_ativa=tuple(int(ativa.get(k,0) or 0) for k in ('left','top','width','height'))
+                    chave_atual=(ativa.get('hwnd'),ativa.get('title'),area_ativa)
+                    if chave_atual!=chave_janela_desktop:
+                        chave_janela_desktop=chave_atual
+                        ocr_hibrido_pendente.clear()
+                        for nome_cache in ('_cache_ocr_screenshot','_cache_ocr_curto'):
+                            cache=getattr(self,nome_cache,None)
+                            if isinstance(cache,dict):cache.clear()
+                        safe_print(f"Desktop: priorizando a janela visivel '{ativa.get('title','')}' antes da tela inteira.",flush=True)
+                    adicionar_regiao_busca(regioes_busca,area_ativa,'desktop_active_window')
+                adicionar_regiao_busca(regioes_busca,tuple(self.obter_metricas_tela_virtual()),'desktop_screen',fallback=bool(regioes_busca))
             self._ultima_regiao_reconhecimento = regioes_busca[-1]["region"] if regioes_busca else None
             if (usando_alvo_execucao or janela_alvo or self.janela_alvo) and not regioes_busca:
                 if usando_alvo_execucao:
@@ -9991,11 +10037,15 @@ class ExecutorAutomacao:
                         isinstance(fluxo_ocr_individual, dict)
                         and str(fluxo_ocr_individual.get("acao") or "") in {"continuar", "parar", "ir_para_bloco"}
                     ):
-                        # Uma falha individual nao e uma tentativa pendente de
-                        # OCR: ela ja decidiu o fluxo. Antes esse resultado era
-                        # descartado pelo cache hibrido e o comportamento geral
-                        # do card acabava substituindo a regra do OCR.
                         ocr_hibrido_pendente.pop(chave_hibrido, None)
+                        if not local_hibrido.get('visual_confirmed'):
+                            # A failed scan is not a failed block yet. Search the
+                            # other regions and wait for the configured timeout;
+                            # Explorer may not have finished opening after Enter.
+                            if fluxo_ocr_pendente is None:
+                                safe_print('OCR ainda nao confirmado nesta area; aguardando a tela ate o tempo configurado.',flush=True)
+                            fluxo_ocr_pendente=local_hibrido
+                            continue
                         return local_hibrido
                     if local_hibrido and local_hibrido.get("visual_confirmed"):
                         ocr_hibrido_pendente.pop(chave_hibrido, None)
@@ -10306,6 +10356,10 @@ class ExecutorAutomacao:
             else:
                 time.sleep(0.025)
 
+        if fluxo_ocr_pendente is not None:
+            safe_print('Tempo de reconhecimento esgotado; aplicando a regra de falha do OCR individual.',flush=True)
+            return fluxo_ocr_pendente
+
         safe_print("Imagem nao encontrada", flush=True)
         safe_print("Reconhecimento finalizado sem encontrar correspondencia.", flush=True)
         if self._ultimo_template_debug:
@@ -10467,15 +10521,17 @@ class ExecutorAutomacao:
             except ValueError as error:
                 safe_print(f"Falha na captura da variável: {error}", flush=True)
                 return None
+        # Individual actions can return early (or change the visible page).
+        # Show the confirmed OCR while its target is still on screen.
+        if texto_ocr_esperado:
+            self.marcar_area_reconhecida(local,duracao=.75,bloqueante=True,tema='ocr_confirmado',etiqueta='OCR encontrado',margem=18)
         acao_ocr_individual = self.aplicar_acao_individual_ocr(local, leitura_relativa=leitura)
         if acao_ocr_individual == "cancelado":
             return None
         if acao_ocr_individual in {"confirmar", "clicar", "ir_para_bloco"}:
             return local
 
-        if texto_ocr_esperado:
-            self.marcar_area_reconhecida(local,duracao=.75,bloqueante=True,tema='ocr_confirmado',etiqueta='OCR encontrado',margem=18)
-        elif not marcador_hibrido:
+        if not texto_ocr_esperado and not marcador_hibrido:
             self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
             local,

@@ -6,6 +6,17 @@ import executar_automacao as motor
 
 
 class HandoffTests(unittest.TestCase):
+    def test_desktop_click_focus_is_not_replaced_by_inherited_chrome_context(self):
+        executor=self.executor()
+        executor._desktop_tela_livre=True;executor._desktop_bloco_sem_alvo=True
+        executor.resolver_janela_evento=Mock(return_value='FGTS - Google Chrome')
+        executor.ativar_janela_alvo=Mock()
+        self.assertIsNone(executor.preparar_janela_para_acao())
+        executor.resolver_janela_evento.assert_not_called()
+        executor.ativar_janela_alvo.assert_not_called()
+        executor.preparar_janela_para_acao('Programa escolhido')
+        executor.ativar_janela_alvo.assert_called_once()
+
     @unittest.skipUnless(motor.os.name == 'nt', 'Win32 only')
     def test_studio_handoff_emits_one_surface_event_and_preserves_execution(self):
         executor=self.executor();executor._pulso_retorno_chrome_pendente=True
