@@ -8,8 +8,8 @@ const fn=name=>source.match(new RegExp(`^(?:async )?function ${name}\\(.*?^}`, '
 function runtime() {
   const pages=[{id:'p1',tabId:12,name:'Página 1'}],runs=new Map(),started=[], tabs=[];
   const context=vm.createContext({URL,structuredClone,Promise,Map,Number,String,
-    activeRuns:runs,chainRuns:new Map(),getPages:async()=>pages,
-    chrome:{tabs:{get:async()=>({id:12,windowId:1,url:'https://portal.test/empresa',title:'Portal'}),update:async(id)=>tabs.push(id)},windows:{update:async()=>{}}},
+    activeRuns:runs,chainRuns:new Map(),getPages:async()=>pages,desktopOutlineTabs:new Set(),updatePageOutline:async()=>{},
+    chrome:{tabs:{sendMessage:async()=>({ok:true}),get:async()=>({id:12,windowId:1,url:'https://portal.test/empresa',title:'Portal'}),update:async(id)=>tabs.push(id)},windows:{update:async()=>{}}},
     executeAutomation:async(automation,tabId,_row,_included,_excluded,_route,pageId,onStarted)=>{
       const run={id:'run-1',status:'running',currentStep:0,totalSteps:2};runs.set(run.id,run);started.push({automation,tabId,pageId});onStarted(run);
       await new Promise(resolve=>{context.finish=()=>{run.status='completed';runs.delete(run.id);resolve();};});return run;
@@ -19,6 +19,16 @@ function runtime() {
   return {context,runs,started,tabs,pages};
 }
 const automation=()=>({schema:'flowdetect_chrome_automation',steps:[{source_order:1,type:'ocr_text'},{source_order:5,type:'focused_text'}],chain_variables:{empresa:'330'}});
+
+test('desktop handoff restores the bound run tab once before confirming completion',async()=>{
+  const {context,runs,tabs}=runtime();const focus=[];
+  context.chrome.windows.update=async(id)=>focus.push(id);
+  runs.set('handoff',{id:'handoff',tabId:12,status:'completed',mapExit:{action:'ir_para_bloco',block:4}});
+  await context.handleStudioChainJob({type:'chain_status',runId:'handoff'});
+  assert.deepEqual(tabs,[12]);assert.deepEqual(focus,[1]);
+  await context.handleStudioChainJob({type:'chain_status',runId:'handoff'});
+  assert.deepEqual(tabs,[12]);
+});
 
 test('agent starts Chrome by command and waits for the same run to finish',async()=>{
   const {context,started,tabs}=runtime();

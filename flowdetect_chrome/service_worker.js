@@ -3,9 +3,10 @@ import { routeAvailable, activateDownloadRoute, deactivateDownloadRoute, clearDo
 import { PAGE_RUN_PREFIX, PAGES_KEY, getPages, createPage, bindPage, unbindPage, deletePage, editPages } from "./execution-pages.js";
 import { tableWorkbookDataUrl } from "./table-workbook.js";
 import {installDemonstration} from './demonstration.js';
+const desktopOutlineTabs=new Set();
 async function updatePageOutline(tabId, page) {
   if (!Number.isInteger(tabId)) return;
-  const update = { type: "flowdetect-page-outline-update", page: page || null };
+  const update = { type: "flowdetect-page-outline-update", page: desktopOutlineTabs.has(tabId)?null:page || null };
   try {
     if ((await chrome.tabs.sendMessage?.(tabId, update))?.ok) return;
   } catch (_) { /* Pages opened before installation might not have the script. */ }
@@ -198,6 +199,15 @@ async function handleStudioChainJob(job) {
     const run = activeRuns.get(id) || chainRuns.get(id);
     if (!run) return { ok: false, error: "Execução não encontrada. A extensão pode ter reiniciado; confira a aba antes de repetir." };
     if (job.type === "chain_stop" && activeRuns.has(id)) run.cancelled = true;
+    // Restore the tab used by this run before desktop recognition reads pixels.
+    if(job.type==='chain_status'&&run.status==='completed'&&run.mapExit&&!run.desktopHandoffPrepared){
+      const tab=await chrome.tabs.get(run.tabId);
+      await chrome.tabs.update(tab.id,{active:true});
+      await chrome.windows.update(tab.windowId,{focused:true});
+      desktopOutlineTabs.add(tab.id);
+      await chrome.tabs.sendMessage(tab.id,{type:'flowdetect-page-outline-handoff',desktop:true}).catch(()=>{});
+      run.desktopHandoffPrepared=true;
+    }
     return { ok: true, run: { id: run.id, status: run.status, currentStep: run.currentStep, totalSteps: run.totalSteps, message: run.lastMessage, mapExit:run.mapExit || null, capturedVariables:run.capturedVariables || {} } };
   }
   if (job.type !== "chain_start") return { ok: false, error: "Comando de encadeamento desconhecido." };
@@ -220,6 +230,8 @@ async function handleStudioChainJob(job) {
   if (chainRuns.size > 100) for (const [id, run] of chainRuns) { if (!activeRuns.has(id)) chainRuns.delete(id); }
   await chrome.tabs.update(tab.id, { active: true });
   await chrome.windows.update(tab.windowId, { focused: true });
+  desktopOutlineTabs.delete(tab.id);
+  await updatePageOutline(tab.id,page);
   return new Promise(resolve => {
     executeAutomation(automation, tab.id, 1, null, [], null, page.id, run => {
       chainRuns.set(run.id, run);
@@ -1824,7 +1836,7 @@ async function handleMessage(message, sender) {
   if (message?.type === "flowdetect-page-outline-state") {
     const tabId = sender?.tab?.id;
     const page = Number.isInteger(tabId) ? (await getPages()).find((item) => item.tabId === tabId) : null;
-    return { ok: true, page: page || null };
+    return { ok: true, page: desktopOutlineTabs.has(tabId)?null:page || null };
   }
   if (message?.type === "flowdetect-pages") {
     let pages = await getPages();

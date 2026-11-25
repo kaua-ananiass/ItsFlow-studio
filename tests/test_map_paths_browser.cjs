@@ -8,10 +8,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 test('map imports an editable lower lane and draws a failure connection inside the same tree',async()=>{
   const web=path.resolve(__dirname,'../tauri_gerador/web');
   const server=http.createServer(async(req,res)=>{
-    try{const pathname=new URL(req.url,'http://localhost').pathname;const file=path.join(web,pathname==='/'?'index.html':pathname);res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.html')?'text/html':'application/octet-stream');res.end(await fs.readFile(file));}catch(_){res.writeHead(404).end();}
+    try{const pathname=new URL(req.url,'http://localhost').pathname;const file=path.join(web,pathname==='/'?'index.html':pathname);res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.html')?'text/html':'application/octet-stream');let body=await fs.readFile(file);if(file.endsWith('main.js'))body=body.toString('utf8').replace('chatWorkspace=initChatGPT(','window.__emptySectionTest={apply:applyPersistedRoadmap};chatWorkspace=initChatGPT(');res.end(body);}catch(_){res.writeHead(404).end();}
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  const browser=await chromium.launch({headless:true});
+  const browser=await chromium.launch({headless:true,...(process.platform==='win32'?{executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'}:{})});
   try{
     const page=await browser.newPage({viewport:{width:1600,height:1000}}),errors=[];
     page.on('pageerror',error=>errors.push(error.message));
@@ -26,6 +26,10 @@ test('map imports an editable lower lane and draws a failure connection inside t
         if(command==='get_roadmap')return structuredClone(fixture);
         if(command==='get_workbook_meta')return {workbooks:[],sheets:[]};
         if(command==='list_saved_automations')return {items:[{id:'other',nome:'Recuperar no portal'}],active_id:'',categories:[]};
+        if(command==='add_text_block'){
+          fixture.events.push(event(fixture.events.length+1,args.sequencia,args.text));fixture.summary.total=fixture.events.length;
+          return structuredClone(fixture);
+        }
         if(command==='insert_text_block'){
           const index=fixture.events.findIndex(event=>event.order===args.targetOrder)+(args.position==='before'?0:1);
           const created=event(0,args.sequencia,args.text);created.id='created-section-block';
@@ -34,9 +38,19 @@ test('map imports an editable lower lane and draws a failure connection inside t
         }
         if(command==='map_paths_action'){
           const request=args.request;
+          if(request.action==='create'){
+            const sequence='empty_section_'+fixture.map_paths.length;
+            fixture.map_paths.push({id:sequence,name:request.name||'Nova',parent:request.parent||'principal',entry_sequence:sequence,sequences:[sequence],engine:request.engine||'desktop',page_id:request.pageId||'1'});
+            fixture.sequences.push(sequence);
+          }
           if(request.action==='import'){
             fixture.map_paths.push({id:'path1',name:'Recuperar no portal',parent:'principal',entry_sequence:'path_web',sequences:['path_web'],engine:'chrome',page_id:'1'});
             fixture.events.push(event(3,'path_web','Abrir portal'),event(4,'path_web','Conferir cliente'));fixture.sequences.push('path_web');fixture.summary.total=4;
+          }
+          if(request.action==='section_execution'){
+            let section=fixture.map_paths.find(path=>path.sequences.includes(request.sequence));
+            if(!section){section={id:'main-mode',name:request.name,parent:'',entry_sequence:request.sequence,sequences:[request.sequence]};fixture.map_paths.push(section);}
+            Object.assign(section,{engine:request.engine,page_id:request.pageId});
           }
           if(request.action==='connect'){
             const source=fixture.events.find(event=>event.order===request.source),suffix=request.route==='failure'?'nao_encontrar':'sucesso';
@@ -88,6 +102,41 @@ test('map imports an editable lower lane and draws a failure connection inside t
     await page.waitForFunction(()=>document.querySelectorAll('.command-map-tree-node-slot').length===4);
     await page.waitForFunction(()=>!document.querySelector('#mapPathsDialog').open);
     assert.equal(await page.locator('.map-canvas-section').count(),2);
+    assert.equal(await page.locator('[data-map-section=path_web]').getAttribute('data-engine'),'chrome');
+    assert.equal(await page.locator('[data-map-section=principal]').getAttribute('data-engine'),'desktop');
+    await page.locator('[data-map-section-engine=path_web]').uncheck();
+    await page.waitForFunction(()=>document.querySelector('[data-map-section=path_web]')?.dataset.engine==='desktop');
+    await page.locator('[data-map-section-engine=path_web]').check();
+    await page.waitForFunction(()=>document.querySelector('[data-map-section=path_web]')?.dataset.engine==='chrome');
+    await page.locator('[data-map-section-page=path_web]').selectOption('2');
+    await page.waitForFunction(()=>window.fixture.map_paths.find(path=>path.id==='path1').page_id==='2');
+    assert.equal(await page.locator('[data-map-section-engine=path_web]').getAttribute('role'),'switch');
+    await page.locator('[data-map-section-engine=path_web]').uncheck();
+    await page.waitForFunction(()=>document.querySelector('[data-map-section=path_web]')?.dataset.engine==='desktop');
+    await page.locator('[data-map-section-engine=path_web]').check();
+    await page.waitForFunction(()=>document.querySelector('[data-map-section=path_web]')?.dataset.engine==='chrome');
+    assert.equal(await page.locator('[data-map-section-page=path_web]').inputValue(),'2');
+    await page.waitForTimeout(90);
+    const midway=await page.locator('[data-map-section=path_web]').evaluate(el=>Number(getComputedStyle(el,'::before').opacity));
+    assert.ok(midway>0&&midway<1,'blue to violet is a crossfade, not an immediate change');
+    assert.equal(await page.locator('[data-map-section=path_web]').evaluate(el=>getComputedStyle(el,'::after').content),'none');
+    await page.waitForTimeout(500);
+    await page.locator('[data-map-section-engine=path_web]').uncheck();
+    await page.waitForFunction(()=>document.querySelector('[data-map-section=path_web]')?.dataset.engine==='desktop');
+    await page.waitForTimeout(90);
+    const reverse=await page.locator('[data-map-section=path_web]').evaluate(el=>Number(getComputedStyle(el,'::before').opacity));
+    assert.ok(reverse>0&&reverse<1,'violet to blue also crossfades');
+    await page.waitForTimeout(500);
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await page.locator('[data-map-section-engine=path_web]').check();
+    await page.waitForFunction(()=>document.querySelector('[data-map-section=path_web]')?.dataset.engine==='chrome');
+    assert.equal(await page.locator('[data-map-section=path_web]').evaluate(el=>getComputedStyle(el,'::before').opacity),'1');
+    await page.emulateMedia({reducedMotion:'no-preference'});
+    const colors=await page.locator('.map-canvas-section').evaluateAll(sections=>sections.map(section=>getComputedStyle(section).borderColor));
+    assert.notEqual(colors[0],colors[1]);
+    if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR){await fs.mkdir(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'section-modes.png')});}
+    assert.equal(await page.locator('.command-map-tree-node-slot').count(),4);
+
     await page.waitForFunction(()=>{
       const sections=[...document.querySelectorAll('.map-canvas-section')];
       return sections.length===2 && parseFloat(sections[1].style.top)>=parseFloat(sections[0].style.top)+parseFloat(sections[0].style.height)+40;
@@ -136,7 +185,7 @@ test('map imports an editable lower lane and draws a failure connection inside t
     assert.match(await page.locator('.map-path-lane-title').nth(1).textContent(),/Recuperar no portal/);
     await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-tree-edge-source-order]')).some(el=>el.dataset.treeEdgeSourceOrder==='1'&&el.dataset.treeEdgeTargetOrder==='3'),null,{timeout:5000});
     const calls=await page.evaluate(()=>requests.filter(item=>item.command==='map_paths_action'));
-    assert.equal(calls[0].request.engine,'chrome');assert.equal(calls[1].request.route,'failure');
+    assert.equal(calls[0].request.engine,'chrome');assert.equal(calls.find(call=>call.request.action==='connect').request.route,'failure');
     const sectionBounds=await page.locator('.map-canvas-section').evaluateAll(nodes=>nodes.map(node=>({top:parseFloat(node.style.top),bottom:parseFloat(node.style.top)+parseFloat(node.style.height)})));
     assert.ok(sectionBounds[1].top>sectionBounds[0].bottom);
     await page.waitForFunction(()=>{const section=[...document.querySelectorAll('.map-canvas-section')].at(-1);return parseFloat(document.querySelector('.map-section-add').style.top)>parseFloat(section.style.top)+parseFloat(section.style.height);});
@@ -229,6 +278,38 @@ test('map imports an editable lower lane and draws a failure connection inside t
     assert.equal(await page.locator('[data-tree-node-sequence="path_web"]').count(),0);
     assert.equal(await page.locator('.command-map-tree-node-slot').count(),2);
     if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR){await fs.mkdir(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'map-paths.png'),fullPage:true});}
+    await page.locator('.map-section-add').click();
+    await page.locator('#mapPathName').fill('Secao vazia');
+    await page.locator('#mapPathCreate').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.map-canvas-section').length===2);
+    assert.equal(await page.locator('.command-map-tree-node-slot').count(),2,'creating a section adds no placeholder block');
+    const empty=page.locator('[data-map-section=empty_section_0]');
+    const plusBefore=await empty.locator('.empty-command-map-add').boundingBox();
+    await empty.getByRole('button',{name:'Criar primeiro bloco',exact:true}).click();
+    await page.locator('.insert-card-panel').waitFor();
+    await page.waitForTimeout(500);
+    const aligned=await empty.evaluate(section=>{const plus=section.querySelector('.empty-command-map-add'),panel=section.querySelector('.insert-card-panel'),a=plus.getBoundingClientRect(),b=panel.getBoundingClientRect(),r=section.getBoundingClientRect(),scale=r.width/section.offsetWidth;return{top:Math.abs(a.top-b.top)/scale,gap:(b.left-a.right)/scale,left:(a.left-r.left)/scale};});
+    assert.ok(aligned.top<2,'plus and creation panel share the same top: '+JSON.stringify(aligned));
+    assert.ok(aligned.left>=47&&aligned.left<52,'first-block button stays at the start of the section');
+    assert.ok(aligned.gap>=20&&aligned.gap<=28,'creation panel has a consistent gap');
+    assert.match(await page.locator('.insert-card-panel h4').textContent(),/Primeiro bloco/);
+    if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'first-block-alignment.png')});
+
+    await page.locator('.insert-card-panel [data-insert-type=text]').click();
+    await page.locator('.insert-card-panel [data-insert-action=save]').click();
+    await page.waitForFunction(()=>window.fixture.events.some(event=>event.sequence==='empty_section_0'));
+    assert.equal(await page.locator('[data-tree-node-sequence=empty_section_0]').count(),1);
+    assert.equal(await empty.locator('.map-section-empty-starter').count(),0);
+    await page.evaluate(()=>{fixture.events=[];fixture.summary.total=0;window.__emptySectionTest.apply(structuredClone(fixture));});
+    await page.waitForFunction(()=>document.querySelectorAll('.map-canvas-section').length===1&&document.querySelectorAll('.command-map-tree-node-slot').length===0);
+    assert.equal(await page.locator('[data-map-section=empty_section_0] .map-section-empty-starter').count(),1);
+    const emptyBounds=await page.locator('[data-map-section=empty_section_0]').evaluate(el=>({height:parseFloat(el.style.height),width:parseFloat(el.style.width)}));assert.ok(emptyBounds.height>200&&emptyBounds.width>500);
+    if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'empty-section.png')});
+    await page.evaluate(()=>{fixture.events=[];fixture.map_paths=[];window.__emptySectionTest.apply(structuredClone(fixture));});
+    await page.locator('.empty-command-map-section-add').click();
+    await page.locator('#mapPathName').fill('Primeira secao');
+    await page.locator('#mapPathCreate').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.map-canvas-section').length===1&&document.querySelectorAll('.command-map-tree-node-slot').length===0);
     assert.deepEqual(errors,[]);
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
 });

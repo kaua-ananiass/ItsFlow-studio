@@ -35,10 +35,12 @@ class Draft:
     def __init__(self,config):
         self.path=Path(config['session_path'])
         self.state={'id':str(uuid.uuid4()),'automation':config['automation'],'revision':config['revision'],
-                    'events':[],'messages':[],'pending':None,'imported':False}
+                    'events':[],'messages':[],'pending':None,'imported':False,'sections':config.get('sections',[]),'target_section':None}
         if self.path.is_file():
             saved=json.loads(self.path.read_text(encoding='utf-8'))
             if saved.get('automation',{}).get('id')==config['automation']['id'] and not saved.get('imported'):self.state=saved
+        self.state['sections']=config.get('sections',self.state.get('sections',[]))
+        self.state.setdefault('target_section',None)
         self.save()
     def save(self):save_draft(self.path,self.state)
     def append(self,event):
@@ -62,7 +64,7 @@ class Draft:
         previous=self.state
         self.state={'id':str(uuid.uuid4()),'automation':previous['automation'],'revision':revision,
                     'events':[],'messages':[{'role':'assistant','content':message}],
-                    'pending':None,'imported':False,
+                    'pending':None,'imported':False,'sections':previous.get('sections',[]),'target_section':previous.get('target_section'),
                     'last_saved':{'id':previous['id'],'count':len(previous['events'])}}
         self.save()
 
@@ -88,15 +90,16 @@ class Recorder:
         summary=[{'id':e['id'],'kind':e['kind'],'label':e.get('label','Etapa'),'description':e.get('description',''),'url':'desktop://local','text':e.get('text',''),'source':e.get('source','selection'),'builder_stage':e.get('builder_stage',0),'recognition':e.get('recognition','image'),'clicks':e.get('clicks',1),'on_success':e.get('on_success','continuar'),'on_failure':e.get('on_failure','parar')} for e in state['events']]
         history=state['messages'][:-1] if state['messages'] and state['messages'][-1]['role']=='user' and state['messages'][-1]['content']==prompt else state['messages']
         packet={'type':'request','request_id':self.request_id,'operation':operation,'automation_id':state['automation']['id'],
-                'engine':'desktop','prompt':prompt,'history':history[-8:],'events':summary if operation=='chat' else state['events'],
+                'engine':'desktop','target_section':state.get('target_section'),'prompt':prompt,'history':history[-8:],'events':summary if operation=='chat' else state['events'],
                 'image':current.get('image',{}).get('data_url') if operation=='chat' and current else None,
                 'session_id':state['id'],'revision':state['revision']}
         if len(json.dumps(packet).encode('utf-8'))>4*1024*1024:self.busy=False;raise ValueError('O rascunho ficou grande. Divida a demonstração.')
         self.publish();self.emit(packet)
     def captured(self,event):
-        self.capturing=False;self.armed=False;self.open=True;self.draft.append(event);self.status='Etapa recebida'
+        self.capturing=False;self.armed=False;self.open=True;self.error='';self.draft.append(event);self.status='Captura pronta para configurar'
         self.emit({'type':'captured'})
-        self.request('chat','Analise esta área selecionada, sem assumir que houve clique: identifique botão, campo ou mensagem. Descreva em uma frase e peça para escolher a ação nos botões abaixo. Sugira uma opção com [[sugerir:clique1]], [[sugerir:clique2]], [[sugerir:texto]], [[sugerir:reconhecer]] ou [[sugerir:validacao]]. A interface pede a finalidade somente depois da escolha e em seguida permite configurar imagem/texto OCR e enviar ao mapa. Não configure nem execute nada.')
+        self.message('assistant','Área capturada. Escolha a ação abaixo e configure seu bloco. Se tiver uma dúvida, envie uma pergunta no chat.')
+        self.publish()
     def configure(self,packet):
         current=self.draft.current()
         if not current or self.draft.state['imported']:raise ValueError('Selecione uma área antes de configurar.')
@@ -116,7 +119,7 @@ class Recorder:
         for name,limit in (('label',100),('description',1000),('value',400),('text',500)):
             if name in packet:update[name]=str(packet[name])[:limit]
         if 'builder_stage' in packet:
-            if type(packet['builder_stage'])!=int or not 0<=packet['builder_stage']<=3:raise ValueError('Etapa de configuração inválida.')
+            if type(packet['builder_stage'])!=int or not 0<=packet['builder_stage']<=4:raise ValueError('Etapa de configuração inválida.')
             update['builder_stage']=packet['builder_stage']
         if 'recognition' in packet:
             if packet['recognition'] not in ('image','ocr'):raise ValueError('Reconhecimento inválido.')
@@ -148,7 +151,7 @@ class Recorder:
                 response=packet.get('result',{})
                 if self.operation=='status':
                     if response.get('automation',{}).get('id')!=self.draft.state['automation']['id']:raise ValueError('Reabra a automação desta demonstração no Studio.')
-                    self.draft.state['revision']=response['revision'];self.status='Destino atualizado'
+                    self.draft.state['sections']=response.get('sections',[]);self.draft.state['revision']=response['revision'];self.status='Destino atualizado'
                     if self.draft.state.get('imported'):self.complete_import(response['revision'])
                 elif response.get('imported'):
                     # Keep the saved session id until the next revision is known.
@@ -157,7 +160,7 @@ class Recorder:
                     revision=response.get('revision')
                     if not revision:
                         self.request('status');return
-                    self.complete_import(revision)
+                    self.draft.state['sections']=response.get('sections',[]);self.complete_import(revision)
                 else:
                     answer=response.get('message','Qual resultado você espera desta etapa?');current=self.draft.current()
                     suggestions=re.findall(r'\[\[sugerir:(clique1|clique2|texto|reconhecer|validacao)\]\]',answer)
@@ -174,11 +177,12 @@ class Recorder:
         elif op=='explain':
             text=str(packet.get('text','')).strip()[:4000]
             if not text:return
-            current=self.draft.current()
-            if current and not current.get('description'):self.draft.explain(text)
             self.message('user',text);self.request('chat',text);return
         elif op=='retry':
-            self.request('status' if self.draft.state.get('imported') else 'chat','Analise o recorte da etapa atual e me ajude a entender como configurá-la.');return
+            if self.draft.state.get('imported'):self.request('status');return
+            question=next((m['content'] for m in reversed(self.draft.state['messages']) if m['role']=='user'),None)
+            if question:self.request('chat',question);return
+            self.error='';self.status='Configure o bloco ou envie uma pergunta no chat'
         elif op=='edit':self.configure(packet)
         elif op=='confirm':
             self.configure(packet);current=self.draft.current()
@@ -189,9 +193,19 @@ class Recorder:
         elif op=='undo':
             if self.draft.state['imported']:raise ValueError('Esta demonstração já está no mapa.')
             if self.draft.state['events']:self.draft.state['events'].pop();self.draft.state['pending']=None;self.draft.save()
+        elif op=='map_sections':
+            self.draft.state['sections']=packet.get('sections',[])
+            self.draft.state['revision']=packet['revision']
+            if self.draft.state.get('target_section') not in {s['id'] for s in self.draft.state['sections']}|{'__new__'}:self.draft.state['target_section']=None
+            self.error='';self.draft.save()
+        elif op=='destination':
+            target=packet.get('target_section')
+            if target!='__new__' and target not in {s['id'] for s in self.draft.state.get('sections',[])}:raise ValueError('Escolha uma se\u00e7\u00e3o dispon\u00edvel.')
+            self.draft.state['target_section']=target;self.error='';self.draft.save()
         elif op=='import':
             self.draft.validate_current()
             if not self.draft.state['events']:raise ValueError('Selecione e configure uma área antes de enviar ao mapa.')
+            if self.config.get('sections') is not None and not self.draft.state.get('target_section'):raise ValueError('Escolha a se\u00e7\u00e3o de destino antes de enviar.')
             self.request('import');return
         elif op=='refresh':self.request('status');return
         elif op=='capture':

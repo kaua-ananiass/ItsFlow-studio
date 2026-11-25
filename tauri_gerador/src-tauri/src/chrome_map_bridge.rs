@@ -5,6 +5,50 @@ use super::*;
 use serde_json::json;
 use std::time::Instant;
 
+// Keep the local runner's mailbox alive exactly as long as its child process.
+// Drop also cleans up if spawning the Python worker fails.
+pub(crate) struct LocalMapBridge {
+    finished: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl LocalMapBridge {
+    pub(crate) fn attach(root: &PathBuf, command: &mut Command) -> Result<Self, String> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let folder=root.join(".flowdetect_map_runs").join(format!("local-{}-{}-{}",std::process::id(),now_millis(),NEXT.fetch_add(1,Ordering::Relaxed)));
+        fs::create_dir_all(&folder).map_err(|error|format!("Não foi possível preparar a ponte Chrome local: {error}"))?;
+        command.env("FLOWDETECT_MAP_BRIDGE_DIR",&folder);
+        let finished=Arc::new(AtomicBool::new(false));
+        let stop=finished.clone();let root=root.clone();
+        let worker=thread::spawn(move||serve_map_bridge(&root,&folder,stop));
+        Ok(Self{finished,worker:Some(worker)})
+    }
+}
+
+impl Drop for LocalMapBridge {
+    fn drop(&mut self) {
+        self.finished.store(true,Ordering::SeqCst);
+        if let Some(worker)=self.worker.take(){let _=worker.join();}
+    }
+}
+
+#[cfg(test)]
+mod local_execution_tests {
+    use super::*;
+    #[test]
+    fn local_executor_inherits_private_bridge_and_cleanup_handles_spawn_failure() {
+        let root=std::env::temp_dir().join(format!("itsflow-local-bridge-{}-{}",std::process::id(),now_millis()));
+        let mut command=Command::new("nonexistent-itsflow-test-executable");
+        let bridge=LocalMapBridge::attach(&root,&mut command).unwrap();
+        let folder=command.get_envs().find(|(key,_)|*key=="FLOWDETECT_MAP_BRIDGE_DIR").and_then(|(_,value)|value).map(PathBuf::from).unwrap();
+        assert!(folder.is_dir());assert!(folder.starts_with(root.join(".flowdetect_map_runs")));
+        assert!(command.spawn().is_err());
+        drop(bridge);
+        assert!(!folder.exists());
+        let _=fs::remove_dir(root.join(".flowdetect_map_runs"));let _=fs::remove_dir(root);
+    }
+}
+
 // A private per-process directory is inherited by the Python child. No unauthenticated network endpoint.
 pub(crate) fn serve_map_bridge(root: &PathBuf, folder: &PathBuf, finished: Arc<AtomicBool>) {
     while !finished.load(Ordering::SeqCst) {

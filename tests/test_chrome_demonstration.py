@@ -14,6 +14,27 @@ import gerenciar_roteiro as helper
 
 
 class DemonstrationTests(unittest.TestCase):
+    def test_selected_section_receives_blocks_without_creating_another_section(self):
+        payload={'eventos':[{'ordem':1,'sequencia':'principal','tipo':'texto_livre','texto':'Inicio','detalhes':{}},
+                            {'ordem':2,'sequencia':'outra','tipo':'texto_livre','texto':'Outro','detalhes':{}}],
+                 'map_paths':[{'id':'existing','name':'Minha seção','entry_sequence':'outra','sequences':['outra'],'page_id':'2'}]}
+        context=demo.section_context(helper,payload)
+        self.assertEqual([s['id'] for s in context['sections']],['principal','outra'])
+        self.assertEqual(context['sections'][1]['blocks'][0]['title'],'Outro')
+        request={'session_id':'12345678-1234-1234-1234-123456789abc','revision':context['revision'],
+                 'target_section':'outra','events':[{'kind':'navigate','url':'https://example.com','label':'Abrir'}]}
+        saved=[]
+        with tempfile.TemporaryDirectory() as folder, patch.object(helper,'PASTA_IMAGENS',Path(folder)/'images'), patch.object(helper,'DIRETORIO_PLANILHAS',Path(folder)/'sheets'), patch.object(helper,'salvar_e_retornar',side_effect=lambda draft:saved.append(copy.deepcopy(draft))):
+            demo.import_demo(helper,payload,request)
+            self.assertEqual(len(saved[0]['map_paths']),1)
+            self.assertEqual(saved[0]['map_paths'][0],payload['map_paths'][0])
+            self.assertEqual(saved[0]['eventos'][-1]['sequencia'],'outra')
+            self.assertEqual(saved[0]['eventos'][:2],payload['eventos'])
+            self.assertTrue(demo.import_demo(helper,saved[0],request)['already_imported'])
+            request['target_section']='removed'
+            with self.assertRaisesRegex(ValueError,'escolhida'):demo.import_demo(helper,payload,request)
+            self.assertEqual(len(saved),1)
+
     def test_import_preserves_existing_map_and_creates_editable_chrome_section_once(self):
         payload = {'eventos': [{'ordem': 1, 'sequencia': 'principal', 'tipo': 'texto_livre', 'texto': 'Original', 'detalhes': {}}]}
         original = copy.deepcopy(payload)

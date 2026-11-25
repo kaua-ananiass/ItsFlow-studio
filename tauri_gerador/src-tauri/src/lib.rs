@@ -2670,19 +2670,19 @@ fn chrome_demonstration_request(app:&AppHandle,request:Value)->Result<Value,Stri
     let active=library["active_id"].as_str().unwrap_or("");
     let operation=request["operation"].as_str().unwrap_or("");
     if operation=="status"{
-        let context=run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"ai_context"}).to_string()])?;
+        let context=run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"demonstration_context"}).to_string()])?;
         let item=library["items"].as_array().and_then(|items|items.iter().find(|item|item["id"].as_str()==Some(active)));
-        return Ok(serde_json::json!({"automation":{"id":active,"name":item.map(|item|item["nome"].clone()).unwrap_or(serde_json::json!("Automação atual"))},"revision":context["revision"]}));
+        return Ok(serde_json::json!({"automation":{"id":active,"name":item.map(|item|item["nome"].clone()).unwrap_or(serde_json::json!("Automação atual"))},"revision":context["revision"],"sections":context["sections"]}));
     }
     if active.is_empty()||request["automation_id"].as_str()!=Some(active){return Err("Reabra no Studio a automação vinculada à demonstração.".into());}
     match operation{
         "import"=>{
-            let result=tauri::async_runtime::block_on(map_paths_action(app.clone(),serde_json::json!({"action":"demonstration_import","engine":request["engine"],"automation_id":active,"events":request["events"],"session_id":request["session_id"],"revision":request["revision"]})))?;
+            let result=tauri::async_runtime::block_on(map_paths_action(app.clone(),serde_json::json!({"action":"demonstration_import","engine":request["engine"],"target_section":request["target_section"],"automation_id":active,"events":request["events"],"session_id":request["session_id"],"revision":request["revision"]})))?;
             let _=app.emit("itsflow-demonstration-imported",serde_json::json!({"automation_id":active}));Ok(result)
         },
         "chat"=>{
             let events=request["events"].as_array().filter(|events|events.len()<=50).ok_or("Demonstração muito extensa.")?;
-            let summary:Vec<Value>=events.iter().map(|event|serde_json::json!({"id":event["id"].as_str().unwrap_or("").chars().take(80).collect::<String>(),"kind":event["kind"].as_str().unwrap_or("").chars().take(20).collect::<String>(),"source":event["source"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"builder_stage":event["builder_stage"].as_u64().filter(|v|*v<=3).unwrap_or(0),"recognition":event["recognition"].as_str().filter(|v|*v=="image"||*v=="ocr").unwrap_or("image"),"clicks":event["clicks"].as_u64().filter(|v|*v==1||*v==2).unwrap_or(1),"on_success":event["on_success"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"on_failure":event["on_failure"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"label":event["label"].as_str().unwrap_or("").chars().take(100).collect::<String>(),"resulting_page":event["resulting_page"].as_str().unwrap_or("").chars().take(300).collect::<String>(),"description":event["description"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),"text":event["text"].as_str().unwrap_or("").chars().take(500).collect::<String>(),"page":event["url"].as_str().unwrap_or("").chars().take(300).collect::<String>()})).collect();
+            let summary:Vec<Value>=events.iter().map(|event|serde_json::json!({"id":event["id"].as_str().unwrap_or("").chars().take(80).collect::<String>(),"kind":event["kind"].as_str().unwrap_or("").chars().take(20).collect::<String>(),"source":event["source"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"builder_stage":event["builder_stage"].as_u64().filter(|v|*v<=4).unwrap_or(0),"recognition":event["recognition"].as_str().filter(|v|*v=="image"||*v=="ocr").unwrap_or("image"),"clicks":event["clicks"].as_u64().filter(|v|*v==1||*v==2).unwrap_or(1),"on_success":event["on_success"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"on_failure":event["on_failure"].as_str().unwrap_or("").chars().take(30).collect::<String>(),"label":event["label"].as_str().unwrap_or("").chars().take(100).collect::<String>(),"resulting_page":event["resulting_page"].as_str().unwrap_or("").chars().take(300).collect::<String>(),"description":event["description"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),"text":event["text"].as_str().unwrap_or("").chars().take(500).collect::<String>(),"page":event["url"].as_str().unwrap_or("").chars().take(300).collect::<String>()})).collect();
             let models=tauri::async_runtime::block_on(chatgpt_action(app.clone(),serde_json::json!({"action":"models"})))?;
             let model=models["models"].as_array().and_then(|items|items.iter().find(|model|model["visibility"]=="list"&&model["slug"].is_string())).and_then(|model|model["slug"].as_str()).ok_or("Conecte a conta ChatGPT no Studio para conversar pela extensão.")?;
             tauri::async_runtime::block_on(chatgpt_action(app.clone(),serde_json::json!({"action":"chat","automation_id":active,"model":model,"prompt":request["prompt"],"history":request["history"],"image":request["image"],"demonstration_source":request["engine"],"demonstration":summary})))
@@ -3840,6 +3840,7 @@ fn execute_remote_automation(
     let map_bridge_dir=root.join(".flowdetect_map_runs").join(now_millis().to_string());
     fs::create_dir_all(&map_bridge_dir).map_err(|e|e.to_string())?;
     command.env("FLOWDETECT_MAP_BRIDGE_DIR",&map_bridge_dir);
+    command.env("FLOWDETECT_EXECUTION_SURFACE","1");
     let mut child = command
         .spawn()
         .map_err(|err| format!("Falha ao iniciar automacao remota no Agent: {err}"))?;
@@ -3874,6 +3875,7 @@ fn execute_remote_automation(
             thread::spawn(move || {
                 let reader = BufReader::new(stdout_pipe);
                 for raw_line in reader.lines().flatten() {
+                    if desktop_assistant::execution_surface_line(&raw_line){continue;}
                     if !raw_line.trim().is_empty() {
                         append_launcher_log(&root, format!("REMOTE STDOUT: {raw_line}"));
                         update_remote_progress_from_stdout(&root, &automation_id, &raw_line);
@@ -3901,6 +3903,7 @@ fn execute_remote_automation(
         if let Some(handle) = stderr_thread {
             let _ = handle.join();
         }
+        desktop_assistant::execution_surface(false);
         append_launcher_log(
             &root_clone,
             format!("Processo remoto finalizado | sucesso={success}"),
@@ -5733,6 +5736,8 @@ fn spawn_test_process(
 
     configure_background_process(&mut command);
 
+    let local_map_bridge=chrome_map_bridge::LocalMapBridge::attach(&root,&mut command)?;
+    command.env("FLOWDETECT_EXECUTION_SURFACE","1");
     let mut child = command
         .spawn()
         .map_err(|err| format!("Falha ao iniciar {error_context}: {err}"))?;
@@ -5755,7 +5760,7 @@ fn spawn_test_process(
         &root,
         format!("Processo iniciado com sucesso: {error_context}"),
     );
-    emit_log(app, format!("Processo iniciado: {error_context}."));
+    emit_log(app, format!("Processo iniciado: {error_context}. Ponte Chrome local preparada."));
 
     let app_handle = app.clone();
     let root_for_thread = root.clone();
@@ -5765,6 +5770,7 @@ fn spawn_test_process(
     let error_context_owned = error_context.to_string();
 
     thread::spawn(move || {
+        let _local_map_bridge=local_map_bridge;
         let stdout_thread = stdout.map(|stdout_pipe| {
             let app = app_handle.clone();
             let root = root_for_thread.clone();
@@ -5774,6 +5780,7 @@ fn spawn_test_process(
                     let Ok(line) = raw_line else {
                         continue;
                     };
+                    if desktop_assistant::execution_surface_line(&line){continue;}
                     if let Some(payload) = parse_progress_line(&line) {
                         let _ = app.emit("test-progress", payload);
                     } else if !line.trim().is_empty() {
@@ -5860,6 +5867,7 @@ fn spawn_test_process(
             *pid_guard = None;
         }
         emit_running_state(&app_handle, false);
+        desktop_assistant::execution_surface(false);
         let success = exit_code == 0;
         append_launcher_log(
             &root_for_thread,
@@ -10263,6 +10271,7 @@ pub fn run() {
         })
         .setup(|app| {
             let app_handle = app.handle().clone();
+            desktop_assistant::init_execution_surface(app_handle.clone());
             if is_flowdetect_agent_runtime(&app_handle) {
                 let root = workspace_root(&app_handle);
                 if let Ok(path)=app_handle.path().app_data_dir(){

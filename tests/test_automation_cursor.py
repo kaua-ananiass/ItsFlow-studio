@@ -12,6 +12,57 @@ from marcador_visual import desenhar_cursor
 
 
 class CursorTest(unittest.TestCase):
+    @unittest.skipUnless(motor.os.name == 'nt', 'Win32 only')
+    def test_desktop_handoff_pulse_finishes_without_cursor_or_focus_change(self):
+        user32=ctypes.WinDLL('user32');user32.GetForegroundWindow.restype=ctypes.c_void_p
+        foreground=user32.GetForegroundWindow()
+        cursor_before=marcador_visual._Point()
+        user32.GetCursorPos(ctypes.byref(cursor_before))
+        try:
+            self.assertTrue(marcador_visual.pulsar_retorno_desktop_windows())
+            service=marcador_visual._servicos_cursor[threading.get_ident()]
+            aura=marcador_visual._auras_analise[service.thread.ident]
+            self.assertIsNotNone(aura.transition_started)
+            self.assertFalse(aura.analysis)
+            self.assertNotIn(service.thread.ident,marcador_visual._cursores_retidos)
+            cursor_after=marcador_visual._Point()
+            user32.GetCursorPos(ctypes.byref(cursor_after))
+            self.assertEqual((cursor_after.x,cursor_after.y),(cursor_before.x,cursor_before.y))
+            # Finishing a desktop action must not abruptly cut off the pulse.
+            marcador_visual.definir_analise_tela_windows(False)
+            self.assertIn(service.thread.ident,marcador_visual._auras_analise)
+            time.sleep(1.35)
+            self.assertNotIn(service.thread.ident,marcador_visual._auras_analise)
+            self.assertEqual(user32.GetForegroundWindow(),foreground)
+        finally:marcador_visual.fechar_cursor_windows()
+
+    @unittest.skipUnless(motor.os.name == 'nt', 'Win32 only')
+    def test_search_aura_is_passive_and_excluded_from_screenshots_without_flicker(self):
+        user32=ctypes.WinDLL('user32')
+        user32.GetForegroundWindow.restype=ctypes.c_void_p
+        user32.IsWindowVisible.argtypes=[ctypes.c_void_p]
+        user32.GetWindowDisplayAffinity.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)]
+        foreground=user32.GetForegroundWindow()
+        try:
+            self.assertTrue(marcador_visual.definir_analise_tela_windows(True))
+            service=marcador_visual._servicos_cursor[threading.get_ident()]
+            aura=marcador_visual._auras_analise[service.thread.ident]
+            self.assertEqual(len(aura.windows),8)
+            self.assertNotIn(service.thread.ident,marcador_visual._cursores_retidos)
+            self.assertEqual(user32.GetForegroundWindow(),foreground)
+            for hwnd,_ in aura.windows:
+                affinity=ctypes.c_ulong()
+                self.assertTrue(user32.GetWindowDisplayAffinity(hwnd,ctypes.byref(affinity)))
+                self.assertEqual(affinity.value,0x11)
+            marcador_visual.suspender_cursor_windows(True)
+            self.assertTrue(all(user32.IsWindowVisible(hwnd) for hwnd,_ in aura.windows))
+            marcador_visual.suspender_cursor_windows(False)
+            self.assertTrue(all(user32.IsWindowVisible(hwnd) for hwnd,_ in aura.windows))
+            marcador_visual.definir_analise_tela_windows(False)
+            self.assertNotIn(service.thread.ident,marcador_visual._auras_analise)
+        finally:
+            marcador_visual.fechar_cursor_windows()
+
     def executor(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
         executor.cancelamento_solicitado = lambda: False
@@ -54,6 +105,8 @@ class CursorTest(unittest.TestCase):
             self.assertFalse(executor.marcar_area_reconhecida({'left':100,'top':100,'width':40,'height':20}, tema='ocr'))
             self.assertFalse(executor.marcar_regiao_absoluta(100,100,18,18,etiqueta='Clique'))
             marker.assert_not_called()
+            executor.marcar_area_reconhecida({'left':100,'top':100,'width':40,'height':20},tema='ocr_confirmado',etiqueta='OCR encontrado')
+            marker.assert_called_once()
 
     @unittest.skipUnless(motor.os.name == 'nt', 'Win32 only')
     def test_animation_runs_independently_but_input_stays_on_executor_thread(self):

@@ -66,16 +66,29 @@ def project(events):
         for step in steps[first_step:]:step['demonstration_description']=str(event.get('description') or '')[:1000]
     return dict(schema='flowdetect_chrome_automation',version=3,automation=dict(nome='Demonstração Chrome'),steps=steps)
 
+def section_context(helper,payload):
+    context=helper.contexto_chatgpt(payload)
+    paths=payload.get('map_paths',[]);sections=[]
+    sequences=list(dict.fromkeys([helper.normalizar_nome_sequencia(payload.get('sequencia_inicial'))]+[helper.normalizar_nome_sequencia(e.get('sequencia')) for e in payload.get('eventos',[])]+[seq for path in paths for seq in path.get('sequences',[])]))
+    for sequence in sequences:
+        path=next((p for p in paths if sequence in p.get('sequences',[])),{})
+        blocks=[dict(order=e.get('ordem'),type=e.get('tipo'),title=str((e.get('detalhes') or {}).get('nome') or (e.get('detalhes') or {}).get('chatgpt_title') or e.get('texto') or e.get('tipo'))[:80]) for e in payload.get('eventos',[]) if helper.normalizar_nome_sequencia(e.get('sequencia'))==sequence]
+        sections.append(dict(id=sequence,name=path.get('name') or sequence,page=str(path.get('page_id') or '1'),engine=path.get('engine') or 'desktop',blocks=blocks))
+    return dict(revision=context['revision'],sections=sections)
+
+
 def import_demo(helper,payload,request):
     expected=request.get('automation_id')
     if expected and helper.obter_automacao_ativa_id()!=expected:raise ValueError('Reabra a automação vinculada à demonstração.')
     identifier=request.get('session_id')
     if not isinstance(identifier,str) or not re.fullmatch(r'[a-zA-Z0-9-]{20,80}',identifier):raise ValueError('Demonstração sem identificação válida.')
     previous=next((item for item in payload.get('map_paths',[]) if item.get('demonstration_id')==identifier),None)
-    if previous:return dict(imported=True,already_imported=True,revision=helper.contexto_chatgpt(payload)['revision'],message='Esta demonstração já está no mapa.')
+    if previous or any(e.get('demonstration_id')==identifier for e in payload.get('eventos',[])):return dict(imported=True,already_imported=True,**section_context(helper,payload),message='Esta demonstração já está no mapa.')
     if request.get('revision')!=helper.contexto_chatgpt(payload)['revision']:raise ValueError('O mapa mudou. Clique em Atualizar destino na extensão e revise antes de enviar.')
     engine='desktop' if request.get('engine')=='desktop' else 'chrome'
     if engine=='chrome' and any(event.get('kind') in ('desktop_click','desktop_text','desktop_validation') for event in request.get('events',[]) if isinstance(event,dict)):raise ValueError('Etapas desktop exigem uma seção desktop.')
+    target=request.get('target_section')
+    if target is not None and target!='__new__' and target not in {s['id'] for s in section_context(helper,payload)['sections']}:raise ValueError('A seção escolhida não existe mais. Atualize o destino e escolha novamente.')
     chrome=project(request.get('events'));draft=copy.deepcopy(payload)
     with tempfile.TemporaryDirectory(prefix='itsflow_demo_') as folder:
         origin=helper.converter_projeto_chrome_importado(chrome,Path(folder))
@@ -87,7 +100,16 @@ def import_demo(helper,payload,request):
                 details['ocr_target_layouts']=[layout]
                 details['leitura_relativa']={'ativo':True,'lado':'livre','largura':layout['width'],'altura':layout['height'],'offset_x':layout['offsetX'],'offset_y':layout['offsetY']}
         section=helper.mesclar_caminho_mapa(draft,origin,'Demonstração Desktop' if engine=='desktop' else 'Demonstração Chrome','principal',Path(folder));section.update(engine=engine,page_id='1',demonstration_id=identifier)
+        imported=draft['eventos'][len(payload.get('eventos',[])):]
+        for event in imported:event['demonstration_id']=identifier
+        if target and target!='__new__':
+            entry=section['entry_sequence']
+            for event in imported:
+                if event.get('sequencia')==entry:event['sequencia']=target
+            draft['map_paths'].remove(section)
+            # Converted demonstration steps are linear; no routing of existing blocks is changed.
+            draft.get('configuracoes_sequencia',{}).pop(entry,None)
         if expected and helper.obter_automacao_ativa_id()!=expected:raise ValueError('A automação ativa mudou. Reabra o destino antes de enviar.')
         helper.normalizar_configuracoes_sequencia(draft)
         helper.salvar_e_retornar(draft)
-    return dict(imported=True,revision=helper.contexto_chatgpt(draft)['revision'],message=f"Demonstração adicionada ao mapa: {len(chrome['steps'])} blocos. Revise os alvos antes de executar.")
+    return dict(imported=True,**section_context(helper,draft),message=f"Demonstração adicionada ao mapa: {len(chrome['steps'])} blocos. Revise os alvos antes de executar.")

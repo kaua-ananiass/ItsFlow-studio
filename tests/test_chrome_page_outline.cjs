@@ -32,6 +32,10 @@ test('linked tab receives page color and deleting the binding removes the overla
     assert.equal(before.ariaHidden,'true');
     await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:{id:'p2',name:'Página 2',color:'#8b5cf6'}},null,()=>{}));
     assert.equal(await page.locator('#__flowdetect_page_outline_host').evaluate(el=>el.style.getPropertyValue('--fd-color')),'#8b5cf6');
+    await page.evaluate(()=>new Promise(resolve=>window.__listeners[0]({type:'flowdetect-page-outline-handoff',desktop:true},null,resolve)));
+    assert.equal(await page.locator('#__flowdetect_page_outline_host').count(),0,'Chrome border leaves before desktop feedback');
+    await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:{id:'p2',name:'Pagina 2',color:'#8b5cf6'}},null,()=>{}));
+    assert.equal(await page.locator('#__flowdetect_page_outline_host').count(),1,'Chrome entry restores the binding border');
     await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:null},null,()=>{}));
     assert.equal(await page.locator('#__flowdetect_page_outline_host').count(),0);
     await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:{id:'invalid',name:'Página',color:'red;position:static'}},null,()=>{}));

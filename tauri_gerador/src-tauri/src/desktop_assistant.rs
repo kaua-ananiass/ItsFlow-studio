@@ -209,16 +209,28 @@ fn layout(app:&AppHandle,open:bool){
         }}}
     }
     set_overlay_visible(&window,true);
+    show_auras(app,&monitor,"assistant-aura");
+}
+
+fn show_auras(app:&AppHandle,monitor:&tauri::Monitor,prefix:&str){
+    let scale=monitor.scale_factor();let p=monitor.position();let size=monitor.size();
     // Four narrow, input-transparent surfaces keep the entire desktop usable.
     let thickness=(26.*scale).round()as u32;
     let started=aura_started();
     for edge in AURA_EDGES{
-        let label=format!("assistant-aura-{edge}");
+        let label=format!("{prefix}-{edge}");
+        let execution=prefix=="execution-aura";
         let aura=if let Some(existing)=app.get_webview_window(&label){Some(existing)}else{
             tauri::WebviewWindowBuilder::new(app,&label,tauri::WebviewUrl::App("assistant-aura.html".into()))
                 .title("Sync aura").inner_size(18.,18.).decorations(false).transparent(true)
                 .background_color(tauri::webview::Color(0,0,0,0)).always_on_top(true).skip_taskbar(true)
                 .resizable(false).shadow(false).focused(false).visible(false)
+                .on_page_load(move|webview,payload|{
+                    if execution&&matches!(payload.event(),tauri::webview::PageLoadEvent::Finished){
+                        let script=if EXECUTION_VISIBLE.load(Ordering::SeqCst){format!("window.startItsflowAura?.({});",aura_started())}else{"window.stopItsflowAura?.();".into()};
+                        let _=webview.eval(&script);
+                    }
+                })
                 .initialization_script(format!("window.itsflowAuraEdge='{edge}';window.itsflowAuraStarted={started};"))
                 .build().ok().map(|aura|{install_overlay_frame_guard(&aura);aura})
         };
@@ -242,14 +254,37 @@ fn layout(app:&AppHandle,open:bool){
     }
 }
 
+fn valid_assistant_control(op:&str)->bool{
+    ["arm","open","collapse","close","explain","retry","edit","confirm","undo","import","refresh","capture","destination"].contains(&op)
+}
+
+#[cfg(test)]
+mod section_control_tests{
+    #[test]
+    fn section_selection_passes_the_native_command_boundary(){
+        assert!(super::valid_assistant_control("destination"));
+        assert!(super::valid_assistant_control("confirm"));
+        assert!(!super::valid_assistant_control("unknown-control"));
+    }
+}
+
 #[tauri::command]
 pub async fn desktop_assistant_action(app:AppHandle,request:Value)->Result<Value,String>{
     let op=request["op"].as_str().unwrap_or("status");
     if op=="drag"{return Ok(serde_json::json!({"accepted":true}));}
+    if op=="map_sections"{
+        let handle=app.clone();
+        let context=tauri::async_runtime::spawn_blocking(move||chrome_demonstration_request(&handle,serde_json::json!({"operation":"status"}))).await.map_err(|error|error.to_string())??;
+        let guard=COMPANION.lock().map_err(|_|"Assistente indisponível")?;
+        let companion=guard.as_ref().ok_or("Abra o assistente no Studio.")?;
+        if context["automation"]["id"]!=companion.snapshot["automation"]["id"]{return Err("Reabra a automação vinculada a este assistente.".into());}
+        send(&companion.input,&serde_json::json!({"op":"map_sections","sections":context["sections"],"revision":context["revision"]}))?;
+        return Ok(serde_json::json!({"accepted":true}));
+    }
     let guard=COMPANION.lock().map_err(|_|"Assistente indisponível")?;
     let companion=guard.as_ref().ok_or("Abra Demonstrar no desktop no Chat IA do Studio.")?;
     if op=="status"{return Ok(companion.snapshot.clone());}
-    if !["arm","open","collapse","close","explain","retry","edit","confirm","undo","import","refresh","capture"].contains(&op){return Err("Controle do assistente inválido.".into());}
+    if !valid_assistant_control(op){return Err(format!("Controle do assistente inválido: {op}. Reinicie o Studio para carregar a versão atualizada."));}
     send(&companion.input,&request)?;
     if op=="close"{hide_surfaces(&app);}
     Ok(serde_json::json!({"accepted":true}))
@@ -278,7 +313,7 @@ fn start(app:AppHandle)->Result<Value,String>{
     fs::create_dir_all(&sessions).map_err(|error|error.to_string())?;
     use sha2::{Digest,Sha256};
     let filename=format!("{:x}.json",Sha256::digest(id.as_bytes()));
-    let config=serde_json::json!({"automation":status["automation"],"revision":status["revision"],"studio_pid":std::process::id(),"session_path":sessions.join(filename)});
+    let config=serde_json::json!({"automation":status["automation"],"revision":status["revision"],"sections":status["sections"],"studio_pid":std::process::id(),"session_path":sessions.join(filename)});
     let mut command=Command::new(program);
     command.args(args).arg("-u").arg(script).current_dir(&root).env("PYTHONUTF8","1").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     configure_no_window(&mut command);
@@ -325,4 +360,70 @@ fn start(app:AppHandle)->Result<Value,String>{
         if current{hide_surfaces(&app);}
     });
     Ok(serde_json::json!({"running":true,"message":"Mini assistente aberto. Demonstre uma ação por vez."}))
+}
+
+// Execution uses the same passive surfaces as Sync, with its own lifecycle.
+static EXECUTION_APP:OnceLock<AppHandle>=OnceLock::new();
+static EXECUTION_QUEUE:OnceLock<std::sync::mpsc::Sender<bool>>=OnceLock::new();
+static EXECUTION_VISIBLE:AtomicBool=AtomicBool::new(false);
+static EXECUTION_GENERATION:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+pub fn init_execution_surface(app:AppHandle){
+    if EXECUTION_APP.set(app.clone()).is_err(){return;}
+    let (sender,receiver)=std::sync::mpsc::channel();let _=EXECUTION_QUEUE.set(sender);
+    // One owner preserves entry/exit order, including rapid Chrome/Desktop hops.
+    thread::spawn(move||{for visible in receiver{render_execution_surface(&app,visible);}});
+}
+
+fn execution_notch_start_script(generation:u64)->String{
+    format!("window.__itsflowExecutionStart={generation};window.startExecutionNotch?.({generation});")
+}
+pub fn execution_surface_line(line:&str)->bool{
+    let Some(state)=line.trim().strip_prefix("EXECUTION_SURFACE|")else{return false};
+    if !["desktop","chrome","end"].contains(&state){return false;}
+    execution_surface(state=="desktop");true
+}
+pub fn execution_surface(visible:bool){
+    if let Some(queue)=EXECUTION_QUEUE.get(){let _=queue.send(visible);}
+}
+fn render_execution_surface(app:&AppHandle,visible:bool){
+    EXECUTION_VISIBLE.store(visible,Ordering::SeqCst);
+    let generation=EXECUTION_GENERATION.fetch_add(1,Ordering::SeqCst)+1;
+    // This function runs on the dedicated worker, never the WebView2 main thread.
+    let target=app.clone();
+        if !visible{
+            for label in AURA_EDGES.iter().map(|e|format!("execution-aura-{e}")).chain(std::iter::once("execution-notch".into())){
+                if let Some(w)=target.get_webview_window(&label){let _=w.eval("window.stopItsflowAura?.();document.body.classList.add('execution-leave');");}
+            }
+            let app=target.clone();thread::spawn(move||{
+                thread::sleep(Duration::from_millis(450));let hide=app.clone();let _=app.run_on_main_thread(move||{
+                    if EXECUTION_GENERATION.load(Ordering::SeqCst)!=generation{return;}
+                    for label in AURA_EDGES.iter().map(|e|format!("execution-aura-{e}")).chain(std::iter::once("execution-notch".into())){if let Some(w)=hide.get_webview_window(&label){set_overlay_visible(&w,false);}}
+                });
+            });return;
+        }
+        let monitor=target.get_webview_window("main").and_then(|w|w.current_monitor().ok().flatten()).or_else(||target.primary_monitor().ok().flatten());
+        let Some(monitor)=monitor else{return};
+        let notch=if let Some(w)=target.get_webview_window("execution-notch"){Some(w)}else{
+            tauri::WebviewWindowBuilder::new(&target,"execution-notch",tauri::WebviewUrl::App("execution-notch.html".into()))
+                .on_page_load(|webview,payload|{
+                    if matches!(payload.event(),tauri::webview::PageLoadEvent::Finished)&&EXECUTION_VISIBLE.load(Ordering::SeqCst){
+                        let _=webview.eval(&execution_notch_start_script(EXECUTION_GENERATION.load(Ordering::SeqCst)));
+                    }
+                })
+                .title("Sync - Executando no Desktop").inner_size(270.,64.).decorations(false).transparent(true)
+                .background_color(tauri::webview::Color(0,0,0,0)).always_on_top(true).skip_taskbar(true)
+                .resizable(false).shadow(false).focused(false).visible(false).build().ok().map(|w|{install_overlay_frame_guard(&w);w})
+        };
+        if let Some(w)=notch{
+            prepare_overlay(&w);
+            if w.set_ignore_cursor_events(true).is_ok(){
+                let scale=monitor.scale_factor();let pos=monitor.position();let size=monitor.size();
+                let _=w.set_position(tauri::PhysicalPosition::new(pos.x+(size.width as f64-270.*scale).round()as i32/2,pos.y));
+                #[cfg(windows)]{use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity,WDA_EXCLUDEFROMCAPTURE};if let Ok(hwnd)=w.hwnd(){unsafe{let _=SetWindowDisplayAffinity(HWND(hwnd.0 as _),WDA_EXCLUDEFROMCAPTURE);}}}
+                let _=w.eval(&execution_notch_start_script(generation));set_overlay_visible(&w,true);
+            }
+        }
+        show_auras(&target,&monitor,"execution-aura");
+        let started=aura_started();
+        for edge in AURA_EDGES{if let Some(w)=target.get_webview_window(&format!("execution-aura-{edge}")){let _=w.eval(&format!("window.startItsflowAura?.({started});"));}}
 }

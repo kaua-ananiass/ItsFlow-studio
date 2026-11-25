@@ -7,6 +7,7 @@ import {renderTableEditor,initTableBlocks} from './table-blocks.js';
 import {initChatGPT} from './chatgpt.js';
 import {initGoogleWorkspace} from './google-workspace.js';
 import {revealWorkspace} from './workspace-transition.js';
+import {initInterfaceZoom} from './interface-zoom.js';
 
 let chatWorkspace = null;
 let chatMapWorkspace = null;
@@ -1866,7 +1867,12 @@ function fitCommandMapSectionBounds(stage) {
   for (const section of stage.querySelectorAll('.map-canvas-section')) {
     const slots = Array.from(stage.querySelectorAll('[data-tree-node-sequence]'))
       .filter(slot => slot.dataset.treeNodeSequence === section.dataset.mapSection);
-    if (!slots.length) continue;
+    if (!slots.length) {
+      const top=firstSection?16:previousBottom;
+      const height=Math.max(320,(section.querySelector('.insert-card-panel')?.offsetHeight||0)+180);
+      section.style.top=`${top}px`;section.style.height=`${height}px`;
+      previousBottom=top+height+48;firstSection=false;continue;
+    }
     const stageTop = stage.getBoundingClientRect().top;
     const cards = slots.map(slot => slot.querySelector('.command-tree-card') || slot);
     const top = Math.min(...cards.map(card => (card.getBoundingClientRect().top - stageTop) / scale));
@@ -11658,7 +11664,7 @@ function getCommandMapPageDefinitions(roadmap = state.roadmap) {
   const knownSequences = new Set(basePages.map((page) => page.sequence));
   const extraPages = Array.from(new Set(roadmap?.sequences ?? []))
     .map((sequence) => normalizeSequenceName(sequence))
-    .filter((sequence) => !knownSequences.has(sequence) && !(roadmap?.map_paths||[]).some(path=>(path.sequences||[]).includes(sequence)))
+    .filter((sequence) => !knownSequences.has(sequence) && !(roadmap?.map_paths||[]).some(path=>path.parent&&(path.sequences||[]).includes(sequence)))
     .map((sequence, index) => ({
       sequence,
       label: (roadmap?.map_paths||[]).find(path=>path.sequences.includes(sequence))?.name || sequence,
@@ -12305,7 +12311,7 @@ function updateCommandMapHeaderSummary() {
 
   if (commandMapMeta) {
     if(normalizeCommandMapViewMode(state.commandMapViewMode)==='tree') {
-      const sectionCount=new Set(pageEvents.map(event=>event.sequence)).size;
+      const sectionCount=commandMapCanvasSequences(pageEvents).length;
       commandMapMeta.textContent=`${total} blocos em ${sectionCount} ${sectionCount===1?'seção':'seções'} nesta página. Adicione seções abaixo e conecte os blocos para definir o fluxo.`;
     } else if (settings.executionMode === "loop_planilha") {
       const afterLoopLabel = settings.afterLoopSequence ? getCommandMapPageLabel(settings.afterLoopSequence) : "encerrar o loop aqui";
@@ -12639,6 +12645,7 @@ function switchCommandMapPage(sequenceName, options = {}) {
 }
 
 function currentSequenceName() {
+  if(state.insertPanel?.targetSequence)return normalizeSequenceName(state.insertPanel.targetSequence);
   const target = state.insertPanel?.targetOrder;
   const source = target && (state.roadmap?.events||[]).find(event=>Number(event.order)===Number(target));
   if(source)return normalizeSequenceName(source.sequence);
@@ -19993,7 +20000,7 @@ function renderInsertPanel(order) {
       <div class="insert-card-header">
         <div>
           <p class="panel-kicker">Novo bloco</p>
-          <h4>${panel.position === "before" ? "Criar antes" : "Criar depois"} do bloco ${order}</h4>
+          <h4>${Number(order)===0?'Primeiro bloco desta seção':`${panel.position === "before" ? "Criar antes" : "Criar depois"} do bloco ${order}`}</h4>
         </div>
         <button class="micro-button" data-insert-action="cancel" type="button" ${panel.isSaving ? "disabled" : ""}>Fechar</button>
       </div>
@@ -20266,15 +20273,15 @@ function renderInsertPanel(order) {
   `;
 }
 
-function renderEmptyCommandMapStarter() {
+function renderEmptyCommandMapStarter(sequence="") {
   const shouldShowInsertPanel =
     state.insertPanel &&
     Number(state.insertPanel.targetOrder) === 0 &&
-    state.insertPanel.emptyStarterOpen;
+    state.insertPanel.emptyStarterOpen && (!sequence || state.insertPanel.targetSequence===sequence);
 
   return `
     <div class="empty-command-map-start-row ${shouldShowInsertPanel ? "is-open" : ""}">
-      <button class="empty-command-map-add" data-empty-insert-open type="button" aria-label="Criar primeiro bloco" title="Criar primeiro bloco">
+      <button class="empty-command-map-add" data-empty-insert-open data-empty-insert-sequence="${escapeHtml(sequence)}" type="button" aria-label="Criar primeiro bloco" title="Criar primeiro bloco">
         <span>+</span>
       </button>
       ${
@@ -20286,6 +20293,7 @@ function renderEmptyCommandMapStarter() {
           `
           : ""
       }
+      ${!sequence&&!shouldShowInsertPanel?'<button class="empty-command-map-section-add" data-map-section-action="create" type="button">Criar seção vazia</button>':''}
     </div>
   `;
 }
@@ -20327,6 +20335,8 @@ function beginKeyCapture(target) {
   showCaptureOverlay("Aperte a tecla ou o atalho desejado. Quando capturar, esta janela some automaticamente.");
   setMessage("Pressione a tecla ou combinacao agora. Use ESC para cancelar.", "success");
 }
+
+initInterfaceZoom({ isCapturing: () => Boolean(state.captureTarget) });
 
 window.addEventListener("keydown", (event) => {
   if (!state.captureTarget || state.captureTarget.mode !== "key") {
@@ -21787,15 +21797,24 @@ function renderCommandMapTreeNode(event, index, events, context, path = [], dept
   `;
 }
 
+function commandMapCanvasSequences(events, pageSequence=state.commandMapPageSequence){
+  const parent=resolveCommandMapParentPage(pageSequence);
+  return [...new Set([...events.map(event=>normalizeSequenceName(event.sequence)),...(state.roadmap?.map_paths||[]).flatMap(path=>(path.sequences||[]).filter(sequence=>resolveCommandMapParentPage(sequence)===parent))])];
+}
+
 function renderCommandMapTreeView(events, pageDefinition) {
   const layout = buildCommandMapTreeStageLayout(events, pageDefinition);
-  const sequences=Array.from(new Set(events.map(event=>normalizeSequenceName(event.sequence))));
+  const sequences=commandMapCanvasSequences(events,pageDefinition.sequence);
+  let sectionBottom=16;
   const sections=sequences.map((sequence,index)=>{
     const nodes=layout.nodes.filter(node=>normalizeSequenceName(node.event.sequence)===sequence);
     const path=(state.roadmap?.map_paths||[]).find(path=>path.sequences.includes(sequence));
-    return {sequence,index,nodes,path,top:Math.max(16,Math.min(...nodes.map(node=>node.y))-140),bottom:Math.max(...nodes.map(node=>node.y+700))};
+    const top=nodes.length?Math.max(16,Math.min(...nodes.map(node=>node.y))-140):sectionBottom;
+    const bottom=nodes.length?Math.max(...nodes.map(node=>node.y+700)):top+320;
+    sectionBottom=Math.max(sectionBottom,bottom+48);
+    return {sequence,index,nodes,path,top,bottom};
   });
-  const footerY=Math.max(...sections.map(section=>section.bottom))+36;
+  const footerY=Math.max(16,...sections.map(section=>section.bottom))+36;
   const stageHeight=Math.max(layout.height,footerY+110);
   return `
     <div class="command-map-tree" role="tree" aria-label="Arvore da ${escapeHtml(pageDefinition.label.toLowerCase())}">
@@ -21804,7 +21823,7 @@ function renderCommandMapTreeView(events, pageDefinition) {
         style="width:${Math.ceil(layout.width)}px;height:${Math.ceil(stageHeight)}px"
       >
         ${sections.map(({sequence,index,nodes,path,top,bottom})=>{
-          return `<section class="map-canvas-section" data-map-section="${escapeHtml(sequence)}" aria-label="${escapeHtml(path?.name||pageDefinition.label)}" style="left:24px;top:${top}px;width:${Math.max(640,layout.width-48)}px;height:${bottom-top}px"><header class="map-section-header"><div class="map-path-lane-title"><span class="map-section-number">SEÇÃO ${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(path?.name||pageDefinition.label)}</strong><span>${path?.engine==='chrome'?'Chrome · extensão':'Desktop'} · ${nodes.length} blocos</span></div><div class="map-section-actions"><button type="button" data-map-section-action="connect" data-map-section-sequence="${escapeHtml(sequence)}">Conectar blocos ↗</button><button type="button" class="map-section-delete" data-map-section-action="delete" data-map-section-sequence="${escapeHtml(sequence)}" aria-label="Apagar seção ${escapeHtml(path?.name||pageDefinition.label)}" title="Apagar seção"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></header></section>`;
+          return `<section class="map-canvas-section" data-engine="${path?.engine==='chrome'?'chrome':'desktop'}" data-map-section="${escapeHtml(sequence)}" aria-label="${escapeHtml(path?.name||pageDefinition.label)}" style="left:24px;top:${top}px;width:${Math.max(640,layout.width-48)}px;height:${bottom-top}px"><header class="map-section-header"><div class="map-path-lane-title"><span class="map-section-number">SEÇÃO ${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(path?.name||pageDefinition.label)}</strong><span>${path?.engine==='chrome'?'Chrome · extensão':'Desktop'} · ${nodes.length} blocos</span></div><div class="map-section-actions"><label class="map-section-chrome-switch"><span>Chrome</span><input type="checkbox" role="switch" data-map-section-engine="${escapeHtml(sequence)}" aria-label="Executar seção ${escapeHtml(path?.name||pageDefinition.label)} no Chrome" ${path?.engine==='chrome'?'checked':''}><span class="map-section-switch-track" aria-hidden="true"></span></label>${path?.engine==='chrome'?`<label class="map-section-engine-label">Aba vinculada<select data-map-section-page="${escapeHtml(sequence)}" aria-label="Página Chrome da seção">${[1,2,3,4].map(page=>`<option value="${page}" ${String(path.page_id||'1')===String(page)?'selected':''}>Página ${page}</option>`).join('')}</select></label>`:''}<button type="button" data-map-section-action="connect" data-map-section-sequence="${escapeHtml(sequence)}">Conectar blocos ↗</button><button type="button" class="map-section-delete" data-map-section-action="delete" data-map-section-sequence="${escapeHtml(sequence)}" aria-label="Apagar seção ${escapeHtml(path?.name||pageDefinition.label)}" title="Apagar seção"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></header>${!nodes.length?`<div class="map-section-empty-starter"><p>Seção vazia</p>${renderEmptyCommandMapStarter(sequence)}</div>`:''}</section>`;
         }).join("")}
         ${layout.edges.map((edge) => renderCommandMapTreeStageEdgeLabel(edge)).join("")}
         ${layout.terminals.map((terminal) => renderCommandMapTreeStageTerminal(terminal)).join("")}
@@ -22124,7 +22143,7 @@ function renderCommandMap(options = {}) {
   updateCommandMapHeaderSummary();
   renderCommandMapPageTabs();
   syncCommandMapViewModeControls();
-  if (!events.length) {
+  if (!events.length && !commandMapCanvasSequences(events).length) {
     state.expandedTreeCardOrder = null;
     commandMapList.innerHTML = renderEmptyCommandMapStarter();
     applyCommandMapZoom();
@@ -24608,7 +24627,7 @@ function applyChatRoadmap(roadmap,placement){
  applyRoadmap(roadmap,{resetCommandMapDrafts:true,preserveCommandMapSequence:currentPage,commandMapLayoutSnapshot:layoutSnapshot});
 }
 chatWorkspace=initChatGPT({invoke,revealBlock:async blockId=>{const block=(state.roadmap?.events||[]).find(e=>e.id===blockId);if(block){setCommandMapFocus(block.order,'auto');openExpandedTreeCard(block.order);}},assistOperation:performAssistantOperation,editorAction:performChatEditorAction,mountMap:host=>{setCommandMapZoom(1,{suppressFocusCenter:true});return chatMapWorkspace.mount(host);},getEditorContext:getChatEditorContext,navigate:navigateChatGuidance,getAutomation:()=>{const id=state.library.activeId;const item=state.library.items.find(item=>item.id===id);return id?{id,name:item?.nome||exportNameInput.value||id}:null;},openAutomation:async id=>{if(state.remoteControl.running)throw Error("Pare a execucao antes de trocar de automacao.");await persistCommandMapDraftsForExecution();const result=await invoke("open_saved_automation",{id});state.insertPanel=null;applyPersistedRoadmap(result);await refreshTestLoopData();state.library.items=result.library?.items||state.library.items;state.library.categories=result.library?.categories||state.library.categories;state.library.activeId=result.library?.active_id||id;if(result.active_automation?.nome)exportNameInput.value=result.active_automation.nome;renderLauncherLibrary();},beforeGenerate:async()=>{if(commandMapMutationActive)throw Error('Aguarde a edicao atual terminar.');},beforeMutate:()=>persistCommandMapDraftsForExecution(),getPage:()=>state.commandMapPageSequence,apply:applyChatRoadmap,openMap:()=>setWorkspaceTab('commands')});
-initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação itsflow',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect'&&action!=='delete')requestAnimationFrame(frameCommandMapPaths);}});
+initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação itsflow',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect'&&action!=='delete'&&action!=='section_execution')requestAnimationFrame(frameCommandMapPaths);}});
 document.getElementById('mapPathsFit')?.addEventListener('click',frameCommandMapPaths);
 integrationsTabButton?.addEventListener("click", () => setWorkspaceTab("integrations"));
 assistTabButton.addEventListener("click", () => setWorkspaceTab("assist"));
@@ -27763,6 +27782,7 @@ commandMapList.addEventListener("click", async (event) => {
   if (emptyOpenButton) {
     state.insertPanel = createInsertPanelState(0, "after");
     state.insertPanel.emptyStarterOpen = true;
+    state.insertPanel.targetSequence = emptyOpenButton.dataset.emptyInsertSequence || "";
     state.insertPanel.suppressIntro = false;
     state.commandMapFocusOrder = 0;
     renderCommandMap({

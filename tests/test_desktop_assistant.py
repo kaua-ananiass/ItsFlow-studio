@@ -16,6 +16,72 @@ import gerenciar_roteiro as helper
 class DesktopAssistantTests(unittest.TestCase):
     def config(self,folder):return {'session_path':str(Path(folder)/'session.json'),'automation':{'id':'a1','name':'Desktop e Chrome'},'revision':'r1'}
 
+    def test_capture_and_visual_builder_do_not_request_ai(self):
+        with tempfile.TemporaryDirectory() as folder:
+            packets=[];recorder=assistant.Recorder(self.config(folder),packets.append)
+            image=assistant.encode_image(Image.new('RGB',(100,60),'white'))
+            recorder.error='subscription_sharing_usage_limit_exceeded'
+            recorder.captured({'kind':'observe','image':image,'requires_confirmation':True})
+            self.assertEqual(recorder.error,'');self.assertFalse(recorder.busy)
+            recorder.command({'op':'retry'})
+            recorder.command({'op':'edit','kind':'desktop_click','description':'Salvar cadastro','builder_stage':2})
+            recorder.command({'op':'confirm','recognition':'ocr','text':'Salvar','builder_stage':3})
+            recorder.command({'op':'destination','target_section':'__new__'})
+            recorder.command({'op':'import'})
+            requests=[p for p in packets if p.get('type')=='request']
+            self.assertEqual([p['operation'] for p in requests],['import'])
+            self.assertEqual(requests[0]['target_section'],'__new__')
+
+    def test_only_user_question_requests_ai_and_limit_does_not_block_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            packets=[];recorder=assistant.Recorder(self.config(folder),packets.append)
+            image=assistant.encode_image(Image.new('RGB',(100,60),'white'))
+            recorder.captured({'kind':'observe','image':image,'requires_confirmation':True})
+            recorder.command({'op':'explain','text':'Como configuro a validação?'})
+            request=packets[-1]
+            self.assertEqual(request['operation'],'chat')
+            self.assertFalse(recorder.draft.current().get('description'))
+            recorder.command({'request_id':request['request_id'],'error':'subscription_sharing_usage_limit_exceeded'})
+            self.assertFalse(recorder.busy)
+            recorder.command({'op':'edit'})
+            self.assertEqual(recorder.error,'')
+            recorder.command({'op':'confirm','description':'Conferir mensagem','builder_stage':3})
+            recorder.command({'op':'destination','target_section':'__new__'})
+            recorder.command({'op':'import'})
+            requests=[p for p in packets if p.get('type')=='request']
+            self.assertEqual([p['operation'] for p in requests],['chat','import'])
+
+    def test_destination_is_explicit_persisted_and_sent_to_studio(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config={**self.config(folder),'sections':[{'id':'principal','name':'Principal','page':'1','blocks':[]}]}
+            packets=[];recorder=assistant.Recorder(config,packets.append)
+            recorder.draft.append({'kind':'observe','description':'Conferir','confirmed':True,'requires_confirmation':True})
+            with self.assertRaisesRegex(ValueError,'destino'):recorder.command({'op':'import'})
+            with self.assertRaisesRegex(ValueError,'dispon'):recorder.command({'op':'destination','target_section':'inexistente'})
+            recorder.command({'op':'destination','target_section':'principal'})
+            self.assertEqual(assistant.Draft(config).state['target_section'],'principal')
+            recorder.command({'op':'import'})
+            self.assertEqual(packets[-1]['target_section'],'principal')
+            recorder.command({'request_id':packets[-1]['request_id'],'result':{'imported':True,'revision':'r2','sections':config['sections']}})
+            self.assertEqual(recorder.snapshot()['target_section'],'principal')
+            self.assertEqual(recorder.snapshot()['sections'],config['sections'])
+
+    def test_map_sections_reloads_existing_draft_and_clears_removed_destination(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config={**self.config(folder),'sections':[]}
+            recorder=assistant.Recorder(config,lambda packet:None)
+            recorder.draft.state['target_section']='removed';recorder.draft.save()
+            config['sections']=[{'id':'available','name':'Disponível','page':'1','blocks':[]}]
+            recorder=assistant.Recorder(config,lambda packet:None)
+            self.assertEqual(recorder.snapshot()['sections'],config['sections'])
+            recorder.error='Controle do assistente inválido.'
+            recorder.command({'op':'map_sections','sections':config['sections'],'revision':'new-map'})
+            self.assertEqual(recorder.snapshot()['revision'],'new-map')
+            self.assertIsNone(recorder.snapshot()['target_section'])
+            self.assertEqual(recorder.error,'')
+            recorder.command({'op':'destination','target_section':'available'})
+            self.assertEqual(recorder.snapshot()['target_section'],'available')
+
     def test_successful_import_returns_to_notch_and_can_save_the_next_capture(self):
         with tempfile.TemporaryDirectory() as folder:
             payload={'eventos':[]};helper.normalizar_configuracoes_sequencia(payload)
@@ -29,7 +95,6 @@ class DesktopAssistantTests(unittest.TestCase):
             with patch.object(helper,'obter_automacao_ativa_id',return_value='a1'),patch.object(helper,'PASTA_IMAGENS',Path(folder)/'images'),patch.object(helper,'DIRETORIO_PLANILHAS',Path(folder)/'sheets'),patch.object(helper,'salvar_e_retornar',side_effect=save):
                 for number in range(2):
                     recorder.captured({'kind':'observe','label':f'Etapa {number+1}','image':image,'source':'selection','requires_confirmation':True})
-                    recorder.command({'request_id':packets[-1]['request_id'],'result':{'message':'Escolha a ação.'}})
                     recorder.command({'op':'confirm','description':'Conferir mensagem','builder_stage':3})
                     recorder.command({'op':'import'});request=packets[-1];sessions.append(request['session_id'])
                     result=demo.import_demo(helper,payload,request);payload=saved[-1]
@@ -121,12 +186,14 @@ class DesktopAssistantTests(unittest.TestCase):
             self.assertFalse(recorder.armed);self.assertFalse(recorder.open)
             image=assistant.encode_image(Image.new('RGB',(220,110),'white'))
             recorder.captured({'kind':'desktop_click','label':'Salvar','image':image})
-            self.assertFalse(recorder.armed);self.assertTrue(recorder.open);self.assertTrue(recorder.busy)
+            self.assertFalse(recorder.armed);self.assertTrue(recorder.open);self.assertFalse(recorder.busy)
+            self.assertFalse(any(packet.get('type')=='request' for packet in packets))
+            recorder.command({'op':'explain','text':'O que este botão faz?'})
             request=packets[-1];self.assertEqual(request['type'],'request');self.assertEqual(request['image'],image['data_url'])
             self.assertTrue(packets[-2]['state']['busy'])
             recorder.command({'request_id':request['request_id'],'result':{'message':'O que este botão faz?'}})
             self.assertFalse(recorder.busy)
-            recorder.command({'op':'edit','kind':'desktop_text','value':'{{CLIENTE}}'})
+            recorder.command({'op':'edit','kind':'desktop_text','value':'{{CLIENTE}}','description':'Escreve o nome do cliente'})
             recorder.command({'op':'explain','text':'Escreve o nome do cliente'})
             request=packets[-1];self.assertNotIn('value',request['events'][-1]);self.assertEqual(request['engine'],'desktop')
             recorder.command({'request_id':request['request_id'],'error':'Sem conexão'})
@@ -141,6 +208,8 @@ class DesktopAssistantTests(unittest.TestCase):
             packets=[];recorder=assistant.Recorder(self.config(folder),packets.append)
             image=assistant.encode_image(Image.new('RGB',(220,110),'white'))
             recorder.captured({'kind':'observe','label':'Região selecionada','image':image,'requires_confirmation':True,'source':'selection'})
+            self.assertFalse(any(packet.get('type')=='request' for packet in packets))
+            recorder.command({'op':'explain','text':'Pode analisar o campo?'})
             recorder.command({'request_id':packets[-1]['request_id'],'result':{'message':'Parece um campo. Qual a finalidade? [[sugerir:texto]]'}})
             self.assertEqual(recorder.draft.current()['kind'],'observe')
             self.assertEqual(recorder.draft.current()['suggestion'],'texto')
@@ -212,7 +281,7 @@ class DesktopAssistantTests(unittest.TestCase):
                 recorder.command({'op':'capture'})
             step=recorder.draft.current();self.assertEqual(step['source'],'selection');self.assertTrue(step['requires_confirmation']);self.assertFalse(step['confirmed']);self.assertEqual(step['kind'],'observe');self.assertFalse(recorder.armed)
             self.assertIn('capture-ready',[packet.get('type') for packet in packets]);self.assertFalse(recorder.capturing)
-            recorder.command({'request_id':packets[-1]['request_id'],'error':'offline'})
+            self.assertFalse(any(packet.get('type')=='request' for packet in packets))
             with self.assertRaisesRegex(ValueError,'Explique'):recorder.command({'op':'capture'})
 
     def test_capture_cancel_and_error_release_capture_state(self):
