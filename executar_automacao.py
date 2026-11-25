@@ -11436,7 +11436,7 @@ class ExecutorAutomacao:
         if reply.exists():
             reply.unlink()
         temporary = base / "request.tmp"
-        temporary.write_text(json.dumps({"automation": automacao, "entryOrder": int(evento["ordem"]), "pageId": caminho.get("page_id") or "1"}, ensure_ascii=False), encoding="utf-8")
+        temporary.write_text(json.dumps({"automation": automacao, "entryOrder": int(evento["ordem"]), "pageId": caminho.get("page_id") or "1", "returningFromDesktop": bool(getattr(self, "_superficie_desktop_ativa", False) or getattr(self, "_desktop_tela_livre", False))}, ensure_ascii=False), encoding="utf-8")
         self._superficie_desktop_ativa=False
         safe_print('EXECUTION_SURFACE|chrome',flush=True)
         os.replace(temporary, base / "request.json")

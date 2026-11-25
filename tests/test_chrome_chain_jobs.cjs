@@ -72,3 +72,17 @@ test('reservation rechecks competing executions after asynchronous tab inspectio
   runs.clear();
   await assert.rejects(context.handleStudioChainJob({type:'chain_start',chainId:'a',automation:automation(),pageId:'p1'}),/reserva/);
 });
+
+
+test('returning to Chrome forwards the entrance aura even after worker state is lost',async()=>{
+  for(const explicit of [true,false]){
+    const {context}=runtime(),updates=[];
+    context.updatePageOutline=async(tab,page,options)=>updates.push({tab,options});
+    if(!explicit)context.desktopOutlineTabs.add(12);
+    await context.handleStudioChainJob({type:'chain_reserve',chainId:'return',stages:[{engine:'chrome',pageId:'p1'}]});
+    await context.handleStudioChainJob({type:'chain_start',chainId:'return',pageId:'p1',automation:automation(),returningFromDesktop:explicit});
+    assert.equal(updates[0].tab,12);assert.equal(updates[0].options.returning,true);
+    assert.equal(context.desktopOutlineTabs.has(12),false);
+    context.finish();await new Promise(setImmediate);
+  }
+});

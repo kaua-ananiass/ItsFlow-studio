@@ -600,10 +600,14 @@ test("Chrome runner advances the spreadsheet row when a flow returns to its firs
 
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
 
-test("Chrome sends key blocks to the page without attaching the debugger", () => {
-  assert.doesNotMatch(source, /chrome\.debugger/);
-  assert.match(source, /if \(step\.type === "key_sequence"\) return executePageStep\(run, step\);/);
-  assert.equal(manifest.permissions.includes("debugger"), false);
+test("Chrome sends key blocks to the page without attaching the debugger", async () => {
+  const calls=[];
+  const context=runner({chrome:{debugger:{attach:async()=>{throw Error('Key blocks must not attach debugger');}}},executePageStep:async(run,step)=>{calls.push({run,step});return 'key sent';}});
+  const executeStep=source.match(/^async function executeStep\(.*?^}/ms);
+  assert.ok(executeStep);vm.runInContext(executeStep[0],context);
+  const run={variables:{},tabId:42};
+  const result=await context.executeStep(run,{type:'key_sequence',keys:['ENTER']});
+  assert.equal(result,'key sent');assert.equal(calls.length,1);assert.deepEqual([...calls[0].step.keys],['ENTER']);
 });
 
 test("visual recognition locates an image even when it has no text", () => {
@@ -646,4 +650,32 @@ test("route wait is cancellable before the destination runs", async () => {
   const run={cancelled:false};
   const context=runner({addLog:async()=>{},sleep:async()=>{run.cancelled=true}});
   await assert.rejects(context.waitForRouteDelay(run,{delay_ms:2000}),/interrompida/);
+});
+
+
+test("an existing tab is prepared after changing the unpacked extension folder", async () => {
+  const sendToPage = source.match(/^async function sendToPage\(.*?^}/ms);
+  let prepared = false, commands = 0;
+  const injections = [];
+  const context = vm.createContext({Date, Math, Number, String, Error,
+    CONTENT_RUNTIME_VERSION: "0.2.101", timeoutDaPagina: () => 1000,
+    esperarAbaPronta: async () => {}, sleep: async () => {},
+    chrome: {
+      scripting: {executeScript: async request => {injections.push(request); prepared = true;}},
+      tabs: {sendMessage: async (tabId, message) => {
+        assert.equal(tabId, 17);
+        if (message.type === "flowdetect-content-runtime-v2") {
+          if (!prepared) throw Error("Receiving end does not exist");
+          return {version: "0.2.101"};
+        }
+        commands++; return {ok: true};
+      }}
+    }
+  });
+  vm.runInContext(sendToPage[0], context);
+  assert.equal((await context.sendToPage(17, {type: "flowdetect-execute-step"})).ok, true);
+  assert.equal(commands, 1);
+  assert.equal(injections.length, 1);
+  assert.equal(injections[0].target.tabId, 17);
+  assert.deepEqual(Array.from(injections[0].files), ["page-outline.js", "automation-cursor.js", "content.js"]);
 });
