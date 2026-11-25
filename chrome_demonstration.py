@@ -97,6 +97,10 @@ def import_demo(helper,payload,request):
             if step.get('demonstration_description'):event.setdefault('detalhes',{})['demonstration_description']=step['demonstration_description']
             if engine=='desktop' and step.get('desktop_ocr_layout'):
                 layout=step['desktop_ocr_layout'];details=event.setdefault('detalhes',{})
+                # Per-target rules take precedence over the block's click setting.
+                # Persist both the action and its continuation explicitly.
+                layout.update(texto=step.get('text',''),action='clicar' if step.get('click') else 'continuar',
+                              clicks=step.get('clicks',1),failureAction=(step.get('on_failure') or {}).get('action','parar'))
                 details['ocr_target_layouts']=[layout]
                 details['leitura_relativa']={'ativo':True,'lado':'livre','largura':layout['width'],'altura':layout['height'],'offset_x':layout['offsetX'],'offset_y':layout['offsetY']}
         section=helper.mesclar_caminho_mapa(draft,origin,'Demonstração Desktop' if engine=='desktop' else 'Demonstração Chrome','principal',Path(folder));section.update(engine=engine,page_id='1',demonstration_id=identifier)
