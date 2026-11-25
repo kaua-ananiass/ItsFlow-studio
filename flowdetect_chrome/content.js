@@ -470,7 +470,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     const clickable = focusableTarget(preferTarget ? target : (atRecognizedPoint || target));
     if (!clickable || !isVisible(clickable)) throw new Error("O alvo reconhecido nao esta visivel para receber o clique.");
     if (!isClickReady(clickable)) throw new Error("O alvo reconhecido esta desativado e nao recebeu o clique.");
-    globalThis.FlowDetectCursor?.indicate(clickable, 'Clique', point);
+    globalThis.FlowDetectCursor?.indicate(clickable, 'Clique', point, clicks);
     const checkbox = checkboxControl(clickable);
     if (checkbox) {
       if (!isClickReady(checkbox)) throw new Error("A caixa de selecao esta desativada e nao recebeu o clique.");
