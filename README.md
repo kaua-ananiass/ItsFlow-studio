@@ -3,6 +3,8 @@
 
 # itsflow Studio
 
+**Atualização de desenvolvimento — 25/11/2026:** [execução assistida minimalista, OCR após mudança de pasta, aura de clique e recuperação da conexão ChatGPT](docs/ATUALIZACAO_ITSFLOW_2026-11-25.md).
+
 **Nova identidade e assistente Sync:** [conheça as novidades do itsflow Studio](docs/ATUALIZACAO_ITSFLOW_2026-11-23.md).
 
 **AUTOMAÇÃO VISUAL · DESKTOP & WEB · STUDIO + AGENT + CHROME**

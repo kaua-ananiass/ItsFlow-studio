@@ -1,5 +1,12 @@
 # Histórico de versões
 
+## Atualizações de desenvolvimento — 25/11/2026
+
+- Aura de clique no ponto real, com clique duplo e movimento reduzido.
+- Recuperação dos scripts em abas existentes após trocar a extensão de pasta.
+- Retorno do Desktop restaura a aura e identifica a volta ao Chrome.
+- Versão publicada 0.2.101 preservada; esta branch não gera uma release da extensão.
+
 ## Atualizacoes de desenvolvimento - 24/11/2026
 
 - Retorno Chrome/Desktop restaura a guia vinculada antes de confirmar a saida.
