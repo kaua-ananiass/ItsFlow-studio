@@ -2,6 +2,7 @@
 import ctypes
 import difflib
 import importlib.util
+import hashlib
 import json
 import math
 import os
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import unicodedata
 import webbrowser
@@ -151,20 +153,71 @@ def caminho_windows_curto(caminho):
     return texto
 
 
+def preparar_dados_tesseract(tessdata):
+    """Tesseract's native filesystem rejects some Unicode paths without 8.3 aliases."""
+    tessdata = Path(tessdata)
+    curto = caminho_windows_curto(tessdata)
+    if os.name != "nt" or curto.isascii():
+        return curto
+    modelos = sorted(tessdata.glob("*.traineddata"))
+    if not modelos:
+        raise RuntimeError("Dados de idioma do OCR nao encontrados.")
+    assinatura = hashlib.sha256()
+    for modelo in modelos:
+        info = modelo.stat()
+        assinatura.update(f"{modelo.name}:{info.st_size}:{info.st_mtime_ns}".encode("utf-8"))
+    base = Path(caminho_windows_curto(tempfile.gettempdir()))
+    if not str(base).isascii():
+        raise RuntimeError("O motor OCR precisa de uma pasta temporaria sem acentos ou com nome curto Windows.")
+    destino = base / "itsflow-ocr" / assinatura.hexdigest()[:20] / "tessdata"
+    destino.mkdir(parents=True, exist_ok=True)
+    for modelo in modelos:
+        arquivo = destino / modelo.name
+        if arquivo.is_file() and arquivo.stat().st_size == modelo.stat().st_size:
+            continue
+        temporario = None
+        try:
+            # Separate temporary names keep parallel recognition workers safe.
+            with tempfile.NamedTemporaryFile(dir=destino, prefix="model-", delete=False) as stream:
+                temporario = Path(stream.name)
+                with modelo.open("rb") as origem:
+                    shutil.copyfileobj(origem, stream)
+            os.replace(temporario, arquivo)
+        finally:
+            if temporario is not None and temporario.exists():
+                temporario.unlink()
+    return str(destino)
+
+
+def referencia_para_pyscreeze(caminho):
+    """Pass pixels rather than Unicode filenames to OpenCV inside PyScreeze."""
+    if os.name == "nt" and PIL_DISPONIVEL and not str(caminho).isascii():
+        with Image.open(caminho) as imagem:
+            return imagem.convert("RGB")
+    return str(caminho)
+
+
+TESSERACT_ERRO_CONFIGURACAO = ""
+
+
 def configurar_tesseract_local():
+    global TESSERACT_ERRO_CONFIGURACAO
+    TESSERACT_ERRO_CONFIGURACAO = ""
     if pytesseract is None:
         return None
-
     executavel = localizar_tesseract_executavel()
     if not executavel:
         return None
-
     try:
         pytesseract.pytesseract.tesseract_cmd = caminho_windows_curto(executavel)
         tessdata = executavel.parent / "tessdata"
         if tessdata.exists():
-            os.environ.setdefault("TESSDATA_PREFIX", caminho_windows_curto(tessdata))
-    except Exception:
+            preferido = Path(os.environ.get("TESSDATA_PREFIX") or tessdata)
+            if not preferido.is_dir() or not any(preferido.glob("*.traineddata")):
+                preferido = tessdata
+            os.environ["TESSDATA_PREFIX"] = preparar_dados_tesseract(preferido)
+    except Exception as erro:
+        TESSERACT_ERRO_CONFIGURACAO = str(erro)
         return None
     return executavel
 
@@ -4012,14 +4065,14 @@ class ExecutorAutomacao:
         try:
             if OPENCV_DISPONIVEL:
                 local_confirmado = pyautogui.locateOnScreen(
-                    str(caminho_imagem),
+                    referencia_para_pyscreeze(caminho_imagem),
                     confidence=confianca_confirmacao,
                     grayscale=False,
                     region=regiao,
                 )
             else:
                 local_confirmado = pyautogui.locateOnScreen(
-                    str(caminho_imagem),
+                    referencia_para_pyscreeze(caminho_imagem),
                     grayscale=False,
                     region=regiao,
                 )
@@ -4371,7 +4424,7 @@ class ExecutorAutomacao:
             return cache
 
         try:
-            referencia_bgr = cv2.imread(caminho, cv2.IMREAD_COLOR)
+            referencia_bgr = cv2.imdecode(np.frombuffer(Path(caminho_imagem).read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR)
             if referencia_bgr is None:
                 return None
             referencia_gray = cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2GRAY)
@@ -8404,6 +8457,9 @@ class ExecutorAutomacao:
                 except Exception as erro:
                     nome_erro = erro.__class__.__name__.lower()
                     mensagem_erro = str(erro).lower()
+                    if TESSERACT_ERRO_CONFIGURACAO and not self._ocr_indisponivel_logado:
+                        safe_print(f"OCR indisponivel: {TESSERACT_ERRO_CONFIGURACAO}", flush=True)
+                        self._ocr_indisponivel_logado = True
                     if (
                         "tesseractnotfound" in nome_erro
                         or "tesseract is not installed" in mensagem_erro
@@ -10046,14 +10102,14 @@ class ExecutorAutomacao:
                             try:
                                 if usa_confianca:
                                     local = pyautogui.locateOnScreen(
-                                        str(caminho_imagem),
+                                        referencia_para_pyscreeze(caminho_imagem),
                                         confidence=confianca_atual,
                                         grayscale=grayscale,
                                         region=regiao,
                                     )
                                 else:
                                     local = pyautogui.locateOnScreen(
-                                        str(caminho_imagem),
+                                        referencia_para_pyscreeze(caminho_imagem),
                                         grayscale=grayscale,
                                         region=regiao,
                                     )
@@ -12388,7 +12444,15 @@ def criar_parser():
     return parser
 
 
+def configurar_saida_executor():
+    # The Studio reads child pipes as UTF-8, including Chrome errors and paths.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main():
+    configurar_saida_executor()
     parser = criar_parser()
     args = parser.parse_args()
 

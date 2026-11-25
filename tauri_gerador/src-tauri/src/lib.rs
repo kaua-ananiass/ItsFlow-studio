@@ -5654,6 +5654,7 @@ fn export_guide(automation_name: &str) -> String {
 }
 
 fn configure_background_process(command: &mut Command) {
+    command.env("PYTHONIOENCODING", "utf-8");
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     configure_no_window(command);
 }
