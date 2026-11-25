@@ -3381,7 +3381,7 @@ class ExecutorAutomacao:
         if self.cancelamento_solicitado():
             return "cancelado"
         time.sleep(0.04)
-        self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(x=destino_x, y=destino_y, clicks=acao["clicks"], interval=0.08))
+        self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(x=destino_x, y=destino_y, clicks=acao["clicks"], interval=0.08), cliques=acao["clicks"])
         safe_print(
             f"OCR {acao['indice'] + 1}: clique individual executado em X/Y: {destino_x}/{destino_y} | clicks={acao['clicks']}",
             flush=True,
@@ -4135,7 +4135,7 @@ class ExecutorAutomacao:
         total_clicks = max(1, int(clicks or 1))
         def enviar_cliques():
             return self._enviar_cliques_tela(destino_x, destino_y, total_clicks, button)
-        self.com_cursor_flow(destino_x, destino_y, 'Clique', enviar_cliques)
+        self.com_cursor_flow(destino_x, destino_y, 'Clique', enviar_cliques, cliques=total_clicks)
         self._ultimo_clique_visual_em = time.perf_counter()
         self._ultima_posicao_clique_visual = {
             "x": int(destino_x), "y": int(destino_y),
@@ -9124,7 +9124,7 @@ class ExecutorAutomacao:
         destino_y = int(resultado["top"] + resultado["height"] / 2 + int(offset_y or 0))
         if clicar:
             time.sleep(0.08)
-            self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(destino_x, destino_y, clicks=max(1, int(clicks or 1))))
+            self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(destino_x, destino_y, clicks=max(1, int(clicks or 1))), cliques=max(1,int(clicks or 1)))
             self._ultimo_clique_visual_em = time.perf_counter()
             self._ultima_posicao_clique_visual = {
                 "x": destino_x,
@@ -9495,7 +9495,7 @@ class ExecutorAutomacao:
     def eh_texto_simples(self, nome):
         return len(nome) == 1 and nome not in {"\r", "\n", "\t"}
 
-    def com_cursor_flow(self, x, y, etiqueta, acao):
+    def com_cursor_flow(self, x, y, etiqueta, acao, cliques=1):
         """Mostra o cursor sem tomar foco. Uma falha visual nunca repete uma ação."""
         self.analisar_com_cursor_flow(False)
         executada = False
@@ -9520,11 +9520,11 @@ class ExecutorAutomacao:
                 origem = obter_posicao() or getattr(self, '_cursor_flow_posicao', None) or pyautogui.position()
                 animar_cursor = getattr(modulo, 'executar_cursor_windows', None)
                 if animar_cursor:
-                    animar_cursor(x, y, etiqueta, origem, executar_uma_vez, self.cancelamento_solicitado)
+                    animar_cursor(x, y, etiqueta, origem, executar_uma_vez, self.cancelamento_solicitado, **({'cliques':cliques} if cliques>1 else {}))
                 else:
                     modulo.exibir_marcador_windows(
                         x, y, 190, 96, 0.26, etiqueta,
-                        cursor=origem, acao=executar_uma_vez, cancelar=self.cancelamento_solicitado, persistir=True,
+                        cursor=origem, acao=executar_uma_vez, cancelar=self.cancelamento_solicitado, persistir=True, cliques=cliques,
                     )
             except Exception:
                 if executada:

@@ -12,6 +12,16 @@ from marcador_visual import desenhar_cursor
 
 
 class CursorTest(unittest.TestCase):
+    def test_click_wave_frames_expand_and_disappear_without_changing_hotspot(self):
+        from PIL import ImageChops
+        idle=marcador_visual.desenhar_quadro_cursor()
+        single=marcador_visual.desenhar_quadro_cursor(tempo_clique=.15)
+        double=marcador_visual.desenhar_quadro_cursor(tempo_clique=.15,cliques=2)
+        self.assertEqual(single.size,idle.size)
+        self.assertIsNotNone(ImageChops.difference(single,idle).getbbox())
+        self.assertIsNotNone(ImageChops.difference(single,double).getbbox())
+        self.assertIsNone(ImageChops.difference(idle,marcador_visual.desenhar_quadro_cursor(tempo_clique=.8,cliques=2)).getbbox())
+
     @unittest.skipUnless(motor.os.name == 'nt', 'Win32 only')
     def test_desktop_handoff_pulse_finishes_without_cursor_or_focus_change(self):
         user32=ctypes.WinDLL('user32');user32.GetForegroundWindow.restype=ctypes.c_void_p
