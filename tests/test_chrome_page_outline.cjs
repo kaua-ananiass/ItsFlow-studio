@@ -36,6 +36,18 @@ test('linked tab receives page color and deleting the binding removes the overla
     assert.equal(await page.locator('#__flowdetect_page_outline_host').count(),0,'Chrome border leaves before desktop feedback');
     await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:{id:'p2',name:'Pagina 2',color:'#8b5cf6'}},null,()=>{}));
     assert.equal(await page.locator('#__flowdetect_page_outline_host').count(),1,'Chrome entry restores the binding border');
+    await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:{id:'p2',name:'Pagina 2',color:'#8b5cf6'},returningFromDesktop:true},null,()=>{}));
+    assert.match(await page.locator('#__flowdetect_page_outline_host').evaluate(el=>el.__flowdetectTag.textContent),/Voltando ao Chrome/);
+    const returning=await page.locator('#__flowdetect_page_outline_host').evaluate(el=>{
+      const animation=el.__flowdetectSurface.getAnimations()[0];
+      return {duration:animation.effect.getTiming().duration,first:animation.effect.getKeyframes()[0].transform};
+    });
+    assert.equal(returning.duration,880);assert.equal(returning.first,'scale(0.988)');
+    await page.waitForTimeout(1000);
+    assert.match(await page.locator('#__flowdetect_page_outline_host').evaluate(el=>el.__flowdetectTag.textContent),/itsflow.*Pagina 2/);
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:{id:'p2',name:'Pagina 2',color:'#8b5cf6'},returningFromDesktop:true},null,()=>{}));
+    assert.equal(await page.locator('#__flowdetect_page_outline_host').evaluate(el=>el.__flowdetectSurface.getAnimations().length),0);
     await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:null},null,()=>{}));
     assert.equal(await page.locator('#__flowdetect_page_outline_host').count(),0);
     await page.evaluate(()=>window.__listeners[0]({type:'flowdetect-page-outline-update',page:{id:'invalid',name:'Página',color:'red;position:static'}},null,()=>{}));

@@ -59,6 +59,9 @@ pub(crate) fn serve_map_bridge(root: &PathBuf, folder: &PathBuf, finished: Arc<A
                 let request: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
                 let chain_id = format!("map-{}", now_millis());
                 let pages = chrome_test_bridge::wait_for_job(json!({"type":"chain_pages"}))?;
+                if pages["ok"] != true {
+                    return Err(pages["error"].as_str().unwrap_or("A extensao nao retornou as abas vinculadas.").into());
+                }
                 let items = pages["pages"]
                     .as_array()
                     .ok_or("A extensao nao retornou paginas.")?;
@@ -73,7 +76,10 @@ pub(crate) fn serve_map_bridge(root: &PathBuf, folder: &PathBuf, finished: Arc<A
                             .and_then(|i| i.checked_sub(1))
                             .and_then(|i| items.get(i))
                     })
-                    .ok_or("Pagina Chrome nao encontrada no agente.")?;
+                    .ok_or("A pagina Chrome desta secao nao esta vinculada na extensao atual. Abra a extensao, vincule a aba do site a pagina indicada na secao e inicie novamente.")?;
+                if !page["tabId"].is_number() {
+                    return Err("A aba vinculada foi fechada ou pertence a instalacao anterior da extensao. Vincule novamente a aba do site na extensao atual antes de iniciar.".into());
+                }
                 let stage = json!({"engine":"chrome","pageId":page["id"]});
                 let reserve = chrome_test_bridge::wait_for_job(
                     json!({"type":"chain_reserve","chainId":chain_id,"stages":[stage]}),
@@ -86,7 +92,7 @@ pub(crate) fn serve_map_bridge(root: &PathBuf, folder: &PathBuf, finished: Arc<A
                 }
                 let outcome = (|| -> Result<Value, String> {
                     let start = chrome_test_bridge::wait_for_job(
-                        json!({"type":"chain_start","chainId":chain_id,"pageId":page["id"],"automation":request["automation"],"entryOrder":request["entryOrder"]}),
+                        json!({"type":"chain_start","chainId":chain_id,"pageId":page["id"],"automation":request["automation"],"entryOrder":request["entryOrder"],"returningFromDesktop":request["returningFromDesktop"]==true}),
                     )?;
                     if start["ok"] != true {
                         return Err(start["error"]
@@ -132,7 +138,9 @@ pub(crate) fn serve_map_bridge(root: &PathBuf, folder: &PathBuf, finished: Arc<A
                                 return Ok(json!({"ok":true,"exit":status["run"]["mapExit"],"variables":status["run"]["capturedVariables"]}))
                             }
                             "completed" | "failed" | "stopped" => {
-                                return Err("O caminho Chrome falhou ou foi interrompido.".into())
+                                return Err(status["run"]["message"].as_str()
+                                    .filter(|message| !message.trim().is_empty())
+                                    .unwrap_or("O caminho Chrome falhou ou foi interrompido.").into())
                             }
                             _ => thread::sleep(Duration::from_millis(500)),
                         }

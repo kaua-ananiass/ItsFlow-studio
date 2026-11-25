@@ -140,6 +140,7 @@ class OcrDiagnosticsTests(unittest.TestCase):
 
     def test_marker_retries_and_preserves_the_ocr_color(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.modo_teste_reconhecimento = True
         executor.bounds_reconhecimento = Mock(return_value=(12, 24, 80, 20))
         executor.feedback_visual_habilitado = Mock(return_value=True)
         executor.marcar_regiao_absoluta = Mock(side_effect=[False, True])

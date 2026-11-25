@@ -338,7 +338,7 @@ class _ServicoCursor:
                         pedido['resultado'] = exibir_marcador_windows(
                             pedido['x'], pedido['y'], 190, 96, .26, pedido['etiqueta'],
                             cursor=origem, acao=pedido['pronto'].set,
-                            cancelar=pedido['cancelar'].is_set, persistir=True,
+                            cancelar=pedido['cancelar'].is_set, persistir=True, cliques=pedido.get('cliques',1),
                         )
                     elif tipo == 'analise':
                         pedido['resultado'] = definir_analise_cursor_windows(pedido['ativo'])
@@ -381,13 +381,13 @@ class _ServicoCursor:
             fechar_cursor_windows()
 
 
-def executar_cursor_windows(x, y, etiqueta, origem, acao, cancelar):
+def executar_cursor_windows(x, y, etiqueta, origem, acao, cancelar, cliques=1):
     identidade = threading.get_ident()
     servico = _servicos_cursor.get(identidade)
     if servico is None:
         servico = _servicos_cursor[identidade] = _ServicoCursor()
     interrupcao = threading.Event()
-    pedido = servico.enviar('mover', x=x, y=y, etiqueta=etiqueta, origem=origem, cancelar=interrupcao)
+    pedido = servico.enviar('mover', x=x, y=y, etiqueta=etiqueta, origem=origem, cancelar=interrupcao, cliques=cliques)
     while not pedido['pronto'].wait(.01):
         if cancelar():
             interrupcao.set()
@@ -492,7 +492,7 @@ def posicao_cursor_windows():
     return estado['posicao'] if estado else None
 
 
-def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, tema="visual", *, cursor=None, acao=None, cancelar=None, persistir=False):
+def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, tema="visual", *, cursor=None, acao=None, cancelar=None, persistir=False, cliques=1):
     if os.name != "nt":
         return False
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -539,7 +539,7 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
             return -1  # HTTRANSPARENT
         return user32.DefWindowProcW(hwnd, mensagem, wparam, lparam)
 
-    primeira = desenhar_cursor(etiqueta) if cursor else desenhar_marcador(largura, altura, etiqueta, tema, 0)
+    primeira = desenhar_quadro_cursor(etiqueta) if cursor else desenhar_marcador(largura, altura, etiqueta, tema, 0)
     largura_total, altura_total = primeira.size
     nome_classe = f"FlowDetectMarkerAlpha_{os.getpid()}_{time.monotonic_ns()}"
     instancia = kernel32.GetModuleHandleW(None)
@@ -590,7 +590,7 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
         origem = _Point(0, 0)
         blend = _Blend(0, 0, 255, 1)  # AC_SRC_OVER / AC_SRC_ALPHA
         tempo_movimento = min(.42, max(.18, .16 + math.hypot(esquerda-cursor[0], topo-cursor[1])*.0003)) if cursor else 0
-        duracao_total = max(tempo_movimento + .10, float(duracao)) if cursor else max(0.12, float(duracao))
+        duracao_total = max(tempo_movimento + (.58 if etiqueta == 'Clique' else .10), float(duracao)) if cursor else max(0.12, float(duracao))
         inicio = time.monotonic()
         fim = inicio + duracao_total
         ultimo_frame = -1
@@ -616,8 +616,8 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
                     suavizado = progresso**3 * (10 + progresso * (-15 + 6*progresso))
                     px = cursor[0] + (esquerda-cursor[0])*suavizado
                     py = cursor[1] + (topo-cursor[1])*suavizado
-                    posicao = _Point(round(px)-CURSOR_HOTSPOT[0], round(py)-CURSOR_HOTSPOT[1])
-                    imagem = desenhar_cursor(etiqueta, progresso >= 1 and not acao_executada and etiqueta == 'Clique')
+                    posicao = _Point(round(px)-CURSOR_HOTSPOT[0]-32, round(py)-CURSOR_HOTSPOT[1]-32)
+                    imagem = desenhar_quadro_cursor(etiqueta, max(0,decorrido-tempo_movimento) if progresso>=1 and etiqueta=='Clique' else None, cliques)
                     chave = frame
                 if chave != ultima_chave:
                     base = primeira if frame == 0 or cursor else desenhar_marcador(
@@ -652,13 +652,30 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
             fechar_cursor_windows()
             def redesenhar(rotulo, fase, ponto=None):
                 if ponto:
-                    posicao.x, posicao.y = round(ponto[0])-CURSOR_HOTSPOT[0], round(ponto[1])-CURSOR_HOTSPOT[1]
-                pixels_cursor = _pixels_premultiplicados(desenhar_cursor(rotulo, fase=fase))
+                    posicao.x, posicao.y = round(ponto[0])-CURSOR_HOTSPOT[0]-32, round(ponto[1])-CURSOR_HOTSPOT[1]-32
+                pixels_cursor = _pixels_premultiplicados(desenhar_quadro_cursor(rotulo, fase=fase))
                 ctypes.memmove(bits.value, pixels_cursor, len(pixels_cursor))
                 user32.UpdateLayeredWindow(hwnd, hdc_tela, ctypes.byref(posicao), ctypes.byref(tamanho), hdc_memoria, ctypes.byref(origem), 0, ctypes.byref(blend), 2)
             _cursores_retidos[threading.get_ident()] = {'limpar': limpar, 'hwnd': hwnd, 'user32': user32, 'desenhar': redesenhar, 'analisando': etiqueta == 'Analisando', 'posicao': (esquerda,topo), 'origem_busca': (esquerda,topo), 'inicio_busca': time.monotonic()}
         else:
             limpar()
+
+
+def desenhar_quadro_cursor(etiqueta='Clique', tempo_clique=None, cliques=1, fase=0):
+    # Transparent padding lets the wave expand around the exact pointer hotspot.
+    frame=Image.new('RGBA',(254,160))
+    if tempo_clique is not None:
+        glow=Image.new('RGBA',frame.size);draw=ImageDraw.Draw(glow)
+        for index in range(min(2,max(1,int(cliques)))):
+            t=(tempo_clique-index*.095)/.48
+            if not 0<=t<=1:continue
+            ease=1-(1-t)**3;radius=5+26*ease;alpha=round(150*(1-t)**1.6)
+            cx,cy=CURSOR_HOTSPOT[0]+32,CURSOR_HOTSPOT[1]+32
+            draw.ellipse((cx-radius,cy-radius,cx+radius,cy+radius),outline=(116,242,211,alpha),width=2)
+        frame.alpha_composite(glow.filter(ImageFilter.GaussianBlur(3)))
+        frame.alpha_composite(glow)
+    frame.alpha_composite(desenhar_cursor(etiqueta,fase=fase),(32,32))
+    return frame
 
 
 @lru_cache(maxsize=64)

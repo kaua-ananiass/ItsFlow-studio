@@ -2,6 +2,7 @@
 import ctypes
 import difflib
 import importlib.util
+import hashlib
 import json
 import math
 import os
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import unicodedata
 import webbrowser
@@ -151,20 +153,71 @@ def caminho_windows_curto(caminho):
     return texto
 
 
+def preparar_dados_tesseract(tessdata):
+    """Tesseract's native filesystem rejects some Unicode paths without 8.3 aliases."""
+    tessdata = Path(tessdata)
+    curto = caminho_windows_curto(tessdata)
+    if os.name != "nt" or curto.isascii():
+        return curto
+    modelos = sorted(tessdata.glob("*.traineddata"))
+    if not modelos:
+        raise RuntimeError("Dados de idioma do OCR nao encontrados.")
+    assinatura = hashlib.sha256()
+    for modelo in modelos:
+        info = modelo.stat()
+        assinatura.update(f"{modelo.name}:{info.st_size}:{info.st_mtime_ns}".encode("utf-8"))
+    base = Path(caminho_windows_curto(tempfile.gettempdir()))
+    if not str(base).isascii():
+        raise RuntimeError("O motor OCR precisa de uma pasta temporaria sem acentos ou com nome curto Windows.")
+    destino = base / "itsflow-ocr" / assinatura.hexdigest()[:20] / "tessdata"
+    destino.mkdir(parents=True, exist_ok=True)
+    for modelo in modelos:
+        arquivo = destino / modelo.name
+        if arquivo.is_file() and arquivo.stat().st_size == modelo.stat().st_size:
+            continue
+        temporario = None
+        try:
+            # Separate temporary names keep parallel recognition workers safe.
+            with tempfile.NamedTemporaryFile(dir=destino, prefix="model-", delete=False) as stream:
+                temporario = Path(stream.name)
+                with modelo.open("rb") as origem:
+                    shutil.copyfileobj(origem, stream)
+            os.replace(temporario, arquivo)
+        finally:
+            if temporario is not None and temporario.exists():
+                temporario.unlink()
+    return str(destino)
+
+
+def referencia_para_pyscreeze(caminho):
+    """Pass pixels rather than Unicode filenames to OpenCV inside PyScreeze."""
+    if os.name == "nt" and PIL_DISPONIVEL and not str(caminho).isascii():
+        with Image.open(caminho) as imagem:
+            return imagem.convert("RGB")
+    return str(caminho)
+
+
+TESSERACT_ERRO_CONFIGURACAO = ""
+
+
 def configurar_tesseract_local():
+    global TESSERACT_ERRO_CONFIGURACAO
+    TESSERACT_ERRO_CONFIGURACAO = ""
     if pytesseract is None:
         return None
-
     executavel = localizar_tesseract_executavel()
     if not executavel:
         return None
-
     try:
         pytesseract.pytesseract.tesseract_cmd = caminho_windows_curto(executavel)
         tessdata = executavel.parent / "tessdata"
         if tessdata.exists():
-            os.environ.setdefault("TESSDATA_PREFIX", caminho_windows_curto(tessdata))
-    except Exception:
+            preferido = Path(os.environ.get("TESSDATA_PREFIX") or tessdata)
+            if not preferido.is_dir() or not any(preferido.glob("*.traineddata")):
+                preferido = tessdata
+            os.environ["TESSDATA_PREFIX"] = preparar_dados_tesseract(preferido)
+    except Exception as erro:
+        TESSERACT_ERRO_CONFIGURACAO = str(erro)
         return None
     return executavel
 
@@ -1021,6 +1074,10 @@ class ExecutorAutomacao:
         return janela
 
     def preparar_janela_para_acao(self, titulo_janela=None, priorizar_evento=False):
+        if (getattr(self, '_desktop_tela_livre', False)
+                and getattr(self, '_desktop_bloco_sem_alvo', False)
+                and not titulo_janela and not self.janela_alvo and not self.alvo_execucao_ativo()):
+            return None  # Keep the focus acquired by the desktop click, not an inherited browser title.
         titulo = str(
             self.resolver_janela_evento(
                 titulo_janela,
@@ -2616,8 +2673,10 @@ class ExecutorAutomacao:
             return None
         try:
             esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-            margem_x = max(16, min(32, int(round(largura * 0.08))))
-            margem_y = max(8, min(16, int(round(altura * 0.18))))
+            # A single OCR anchor fixes the center, but cannot measure scale.
+            # Leave room for the same control at another monitor's DPI.
+            margem_x = max(24, min(120, int(round(largura * 0.55))))
+            margem_y = max(16, min(64, int(round(altura * 0.55))))
             regiao = self.limitar_regiao(
                 (esquerda - margem_x, topo - margem_y,
                  largura + 2 * margem_x, altura + 2 * margem_y),
@@ -2635,8 +2694,11 @@ class ExecutorAutomacao:
                 return None
             escala_base = largura / max(1.0, float(ref_w))
             melhor = None
-            for fator in (1.0, 0.97, 1.03, 0.9, 1.1):
+            variantes_bordas = []
+            for fator in (1.0, 0.97, 1.03, 0.9, 1.1, 0.8, 1.25, 1.5, 1.75, 2.0):
                 escala = escala_base * fator
+                if not 0.50 <= escala <= 2.00:
+                    continue
                 w = max(1, int(round(ref_w * escala)))
                 h = max(1, int(round(ref_h * escala)))
                 if w > tela.shape[1] or h > tela.shape[0]:
@@ -2645,12 +2707,26 @@ class ExecutorAutomacao:
                 bordas_ref = cv2.Canny(ref_escalada, 30, 100)
                 if cv2.countNonZero(bordas_ref) < 35:
                     continue
+                variantes_bordas.append((bordas_ref,w,h,escala))
                 mapa = cv2.matchTemplate(bordas_tela, bordas_ref, cv2.TM_CCOEFF_NORMED)
                 _minimo, score, _pos_min, pos = cv2.minMaxLoc(mapa)
                 if melhor is None or float(score) > melhor[0]:
                     melhor = (float(score), int(base_left) + pos[0], int(base_top) + pos[1], w, h, escala)
             if not melhor or melhor[0] < 0.55:
-                return None
+                # Different DPI/selection antialiasing moves glyph edges by a
+                # pixel. Only after exact edges fail, compare softened edges
+                # with a stricter score; text is still rechecked by the caller.
+                suave_tela=cv2.GaussianBlur(bordas_tela,(3,3),0)
+                melhor_suave=None
+                for bordas_ref,w,h,escala in variantes_bordas:
+                    suave_ref=cv2.GaussianBlur(bordas_ref,(3,3),0)
+                    mapa=cv2.matchTemplate(suave_tela,suave_ref,cv2.TM_CCOEFF_NORMED)
+                    _min,score,_pos_min,pos=cv2.minMaxLoc(mapa)
+                    if score>=0.72 and (melhor_suave is None or score>melhor_suave[0]):
+                        melhor_suave=(float(score),int(base_left)+pos[0],int(base_top)+pos[1],w,h,escala)
+                if not melhor_suave:
+                    return None
+                melhor=melhor_suave
             score, x, y, w, h, escala = melhor
             return {
                 "left": x, "top": y, "width": w, "height": h,
@@ -3305,7 +3381,7 @@ class ExecutorAutomacao:
         if self.cancelamento_solicitado():
             return "cancelado"
         time.sleep(0.04)
-        self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(x=destino_x, y=destino_y, clicks=acao["clicks"], interval=0.08))
+        self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(x=destino_x, y=destino_y, clicks=acao["clicks"], interval=0.08), cliques=acao["clicks"])
         safe_print(
             f"OCR {acao['indice'] + 1}: clique individual executado em X/Y: {destino_x}/{destino_y} | clicks={acao['clicks']}",
             flush=True,
@@ -4012,14 +4088,14 @@ class ExecutorAutomacao:
         try:
             if OPENCV_DISPONIVEL:
                 local_confirmado = pyautogui.locateOnScreen(
-                    str(caminho_imagem),
+                    referencia_para_pyscreeze(caminho_imagem),
                     confidence=confianca_confirmacao,
                     grayscale=False,
                     region=regiao,
                 )
             else:
                 local_confirmado = pyautogui.locateOnScreen(
-                    str(caminho_imagem),
+                    referencia_para_pyscreeze(caminho_imagem),
                     grayscale=False,
                     region=regiao,
                 )
@@ -4059,7 +4135,7 @@ class ExecutorAutomacao:
         total_clicks = max(1, int(clicks or 1))
         def enviar_cliques():
             return self._enviar_cliques_tela(destino_x, destino_y, total_clicks, button)
-        self.com_cursor_flow(destino_x, destino_y, 'Clique', enviar_cliques)
+        self.com_cursor_flow(destino_x, destino_y, 'Clique', enviar_cliques, cliques=total_clicks)
         self._ultimo_clique_visual_em = time.perf_counter()
         self._ultima_posicao_clique_visual = {
             "x": int(destino_x), "y": int(destino_y),
@@ -4371,7 +4447,7 @@ class ExecutorAutomacao:
             return cache
 
         try:
-            referencia_bgr = cv2.imread(caminho, cv2.IMREAD_COLOR)
+            referencia_bgr = cv2.imdecode(np.frombuffer(Path(caminho_imagem).read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR)
             if referencia_bgr is None:
                 return None
             referencia_gray = cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2GRAY)
@@ -5244,7 +5320,12 @@ class ExecutorAutomacao:
             # A escala vem da geometria dos OCRs confirmados. Mesmo no perfil
             # rapido testamos quatro ajustes proximos: isso cobre DPI/zoom de
             # outra maquina sem esperar o timeout mudar para "balanced".
-            escalas_fallback = escalas_guiadas_por_ocr
+            # With only one text anchor, the estimate is 1.0 even when the
+            # live control is rendered at 125/150% DPI. Do not replace all
+            # broader scales with tiny adjustments around that estimate.
+            escalas_fallback = tuple(dict.fromkeys(
+                (*escalas_guiadas_por_ocr, *escalas_fallback, 1.25, 1.5, 1.75, 2.0)
+            ))
 
         limite_escala_minima = 0.50 if escala_referencia is not None else 0.75
         limite_escala_maxima = 2.00 if escala_referencia is not None else 1.35
@@ -8404,6 +8485,9 @@ class ExecutorAutomacao:
                 except Exception as erro:
                     nome_erro = erro.__class__.__name__.lower()
                     mensagem_erro = str(erro).lower()
+                    if TESSERACT_ERRO_CONFIGURACAO and not self._ocr_indisponivel_logado:
+                        safe_print(f"OCR indisponivel: {TESSERACT_ERRO_CONFIGURACAO}", flush=True)
+                        self._ocr_indisponivel_logado = True
                     if (
                         "tesseractnotfound" in nome_erro
                         or "tesseract is not installed" in mensagem_erro
@@ -9040,7 +9124,7 @@ class ExecutorAutomacao:
         destino_y = int(resultado["top"] + resultado["height"] / 2 + int(offset_y or 0))
         if clicar:
             time.sleep(0.08)
-            self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(destino_x, destino_y, clicks=max(1, int(clicks or 1))))
+            self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(destino_x, destino_y, clicks=max(1, int(clicks or 1))), cliques=max(1,int(clicks or 1)))
             self._ultimo_clique_visual_em = time.perf_counter()
             self._ultima_posicao_clique_visual = {
                 "x": destino_x,
@@ -9411,7 +9495,7 @@ class ExecutorAutomacao:
     def eh_texto_simples(self, nome):
         return len(nome) == 1 and nome not in {"\r", "\n", "\t"}
 
-    def com_cursor_flow(self, x, y, etiqueta, acao):
+    def com_cursor_flow(self, x, y, etiqueta, acao, cliques=1):
         """Mostra o cursor sem tomar foco. Uma falha visual nunca repete uma ação."""
         self.analisar_com_cursor_flow(False)
         executada = False
@@ -9436,11 +9520,11 @@ class ExecutorAutomacao:
                 origem = obter_posicao() or getattr(self, '_cursor_flow_posicao', None) or pyautogui.position()
                 animar_cursor = getattr(modulo, 'executar_cursor_windows', None)
                 if animar_cursor:
-                    animar_cursor(x, y, etiqueta, origem, executar_uma_vez, self.cancelamento_solicitado)
+                    animar_cursor(x, y, etiqueta, origem, executar_uma_vez, self.cancelamento_solicitado, **({'cliques':cliques} if cliques>1 else {}))
                 else:
                     modulo.exibir_marcador_windows(
                         x, y, 190, 96, 0.26, etiqueta,
-                        cursor=origem, acao=executar_uma_vez, cancelar=self.cancelamento_solicitado, persistir=True,
+                        cursor=origem, acao=executar_uma_vez, cancelar=self.cancelamento_solicitado, persistir=True, cliques=cliques,
                     )
             except Exception:
                 if executada:
@@ -9610,6 +9694,8 @@ class ExecutorAutomacao:
         ultima_falha = None
         ultima_tentativa_ocr = 0.0
         ocr_hibrido_pendente = {}
+        fluxo_ocr_pendente = None
+        chave_janela_desktop = None
         ultima_ativacao_janela = 0.0
         self._ultima_regiao_reconhecimento = None
         self._ultimo_template_debug = None
@@ -9840,9 +9926,25 @@ class ExecutorAutomacao:
                 adicionar_regiao_busca(regioes_busca, None, "screen", fallback=True)
 
             if busca_desktop_livre:
-                # The Windows taskbar lies outside a maximized browser's bounds.
-                # Search actual desktop pixels, including taskbar and other apps.
-                regioes_busca=[{'region':tuple(self.obter_metricas_tela_virtual()),'stage':'desktop_screen','fallback':False}]
+                # Follow the visible desktop app just as Procurar does. Refresh
+                # each cycle because Enter may still be opening Explorer.
+                # Keep the full desktop as a fallback for taskbar/other monitors.
+                regioes_busca=[]
+                ativa=self.obter_janela_ativa()
+                if (isinstance(ativa,dict) and not self.janela_parece_interface_flowdetect(ativa)
+                        and int(ativa.get('width',0) or 0)>=260
+                        and int(ativa.get('height',0) or 0)>=180):
+                    area_ativa=tuple(int(ativa.get(k,0) or 0) for k in ('left','top','width','height'))
+                    chave_atual=(ativa.get('hwnd'),ativa.get('title'),area_ativa)
+                    if chave_atual!=chave_janela_desktop:
+                        chave_janela_desktop=chave_atual
+                        ocr_hibrido_pendente.clear()
+                        for nome_cache in ('_cache_ocr_screenshot','_cache_ocr_curto'):
+                            cache=getattr(self,nome_cache,None)
+                            if isinstance(cache,dict):cache.clear()
+                        safe_print(f"Desktop: priorizando a janela visivel '{ativa.get('title','')}' antes da tela inteira.",flush=True)
+                    adicionar_regiao_busca(regioes_busca,area_ativa,'desktop_active_window')
+                adicionar_regiao_busca(regioes_busca,tuple(self.obter_metricas_tela_virtual()),'desktop_screen',fallback=bool(regioes_busca))
             self._ultima_regiao_reconhecimento = regioes_busca[-1]["region"] if regioes_busca else None
             if (usando_alvo_execucao or janela_alvo or self.janela_alvo) and not regioes_busca:
                 if usando_alvo_execucao:
@@ -9935,11 +10037,15 @@ class ExecutorAutomacao:
                         isinstance(fluxo_ocr_individual, dict)
                         and str(fluxo_ocr_individual.get("acao") or "") in {"continuar", "parar", "ir_para_bloco"}
                     ):
-                        # Uma falha individual nao e uma tentativa pendente de
-                        # OCR: ela ja decidiu o fluxo. Antes esse resultado era
-                        # descartado pelo cache hibrido e o comportamento geral
-                        # do card acabava substituindo a regra do OCR.
                         ocr_hibrido_pendente.pop(chave_hibrido, None)
+                        if not local_hibrido.get('visual_confirmed'):
+                            # A failed scan is not a failed block yet. Search the
+                            # other regions and wait for the configured timeout;
+                            # Explorer may not have finished opening after Enter.
+                            if fluxo_ocr_pendente is None:
+                                safe_print('OCR ainda nao confirmado nesta area; aguardando a tela ate o tempo configurado.',flush=True)
+                            fluxo_ocr_pendente=local_hibrido
+                            continue
                         return local_hibrido
                     if local_hibrido and local_hibrido.get("visual_confirmed"):
                         ocr_hibrido_pendente.pop(chave_hibrido, None)
@@ -10046,14 +10152,14 @@ class ExecutorAutomacao:
                             try:
                                 if usa_confianca:
                                     local = pyautogui.locateOnScreen(
-                                        str(caminho_imagem),
+                                        referencia_para_pyscreeze(caminho_imagem),
                                         confidence=confianca_atual,
                                         grayscale=grayscale,
                                         region=regiao,
                                     )
                                 else:
                                     local = pyautogui.locateOnScreen(
-                                        str(caminho_imagem),
+                                        referencia_para_pyscreeze(caminho_imagem),
                                         grayscale=grayscale,
                                         region=regiao,
                                     )
@@ -10250,6 +10356,10 @@ class ExecutorAutomacao:
             else:
                 time.sleep(0.025)
 
+        if fluxo_ocr_pendente is not None:
+            safe_print('Tempo de reconhecimento esgotado; aplicando a regra de falha do OCR individual.',flush=True)
+            return fluxo_ocr_pendente
+
         safe_print("Imagem nao encontrada", flush=True)
         safe_print("Reconhecimento finalizado sem encontrar correspondencia.", flush=True)
         if self._ultimo_template_debug:
@@ -10411,15 +10521,17 @@ class ExecutorAutomacao:
             except ValueError as error:
                 safe_print(f"Falha na captura da variável: {error}", flush=True)
                 return None
+        # Individual actions can return early (or change the visible page).
+        # Show the confirmed OCR while its target is still on screen.
+        if texto_ocr_esperado:
+            self.marcar_area_reconhecida(local,duracao=.75,bloqueante=True,tema='ocr_confirmado',etiqueta='OCR encontrado',margem=18)
         acao_ocr_individual = self.aplicar_acao_individual_ocr(local, leitura_relativa=leitura)
         if acao_ocr_individual == "cancelado":
             return None
         if acao_ocr_individual in {"confirmar", "clicar", "ir_para_bloco"}:
             return local
 
-        if texto_ocr_esperado:
-            self.marcar_area_reconhecida(local,duracao=.75,bloqueante=True,tema='ocr_confirmado',etiqueta='OCR encontrado',margem=18)
-        elif not marcador_hibrido:
+        if not texto_ocr_esperado and not marcador_hibrido:
             self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
             local,
@@ -11324,7 +11436,7 @@ class ExecutorAutomacao:
         if reply.exists():
             reply.unlink()
         temporary = base / "request.tmp"
-        temporary.write_text(json.dumps({"automation": automacao, "entryOrder": int(evento["ordem"]), "pageId": caminho.get("page_id") or "1"}, ensure_ascii=False), encoding="utf-8")
+        temporary.write_text(json.dumps({"automation": automacao, "entryOrder": int(evento["ordem"]), "pageId": caminho.get("page_id") or "1", "returningFromDesktop": bool(getattr(self, "_superficie_desktop_ativa", False) or getattr(self, "_desktop_tela_livre", False))}, ensure_ascii=False), encoding="utf-8")
         self._superficie_desktop_ativa=False
         safe_print('EXECUTION_SURFACE|chrome',flush=True)
         os.replace(temporary, base / "request.json")
@@ -12388,7 +12500,15 @@ def criar_parser():
     return parser
 
 
+def configurar_saida_executor():
+    # The Studio reads child pipes as UTF-8, including Chrome errors and paths.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main():
+    configurar_saida_executor()
     parser = criar_parser()
     args = parser.parse_args()
 

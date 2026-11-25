@@ -264,6 +264,11 @@ class DesktopAssistantTests(unittest.TestCase):
             self.assertEqual(details['texto_ocr_busca'],'Salvar');self.assertEqual(details['fonte_ocr'],'legado')
             self.assertEqual(details['leitura_relativa']['largura'],120);self.assertEqual(details['ocr_target_layouts'][0]['offsetX'],-20)
             self.assertTrue(details['clicar']);self.assertEqual(details['acao_ocr'],'clicar')
+            self.assertEqual(details['ocr_target_layouts'][0]['action'],'clicar')
+            self.assertEqual(details['ocr_target_layouts'][0]['clicks'],2)
+            from executar_automacao import ExecutorAutomacao
+            rule=ExecutorAutomacao.__new__(ExecutorAutomacao).acao_individual_ocr_configurada({'ocr_target_individual':True,'ocr_target_action':details['ocr_target_layouts'][0]})
+            self.assertEqual(rule['acao'],'clicar');self.assertEqual(rule['clicks'],2)
             for region in ({'x':.8,'y':0,'width':.5,'height':1},{'x':0,'y':0,'width':0,'height':1}):
                 with self.assertRaises(ValueError):recorder.configure({'ocr_region':region})
                 with self.assertRaises(ValueError):demo.project([{**event,'ocr_region':region}])

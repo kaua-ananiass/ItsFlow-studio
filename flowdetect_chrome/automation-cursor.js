@@ -51,7 +51,8 @@
       small{position:absolute;left:14px;top:32px;padding:4px 8px;border-radius:6px;background:#092b31;color:#d9fff5;font:11px/1.4 "Segoe UI",sans-serif;white-space:nowrap;transition:opacity .25s}.idle small{opacity:.55}
       .near-right b,.near-right small{left:auto;right:4px}
       svg{display:block}.pulse{position:absolute;left:-12px;top:-12px;width:28px;height:28px;border:2px solid #8ef0d5;border-radius:50%;opacity:0}
-      .click .pulse{animation:ripple .3s ease-out}@keyframes ripple{from{transform:scale(.4);opacity:1}to{transform:scale(1.8);opacity:0}}
+      .click-aura{position:absolute;transform:translate(-50%,-50%);width:56px;height:56px;border:1px solid #8ff5dc;border-radius:50%;background:radial-gradient(circle,transparent 40%,#64e5c526 70%,transparent 73%);box-shadow:0 0 12px #53e0c52b,inset 0 0 10px #53e0c51c;opacity:0;will-change:transform,opacity}
+      .click .pulse{display:none}@keyframes ripple{from{transform:scale(.4);opacity:1}to{transform:scale(1.8);opacity:0}}
       .loupe{display:none;position:absolute;left:26px;top:4px;color:#8ef0d5}.searching .loupe{display:block;animation:inspect 1.4s ease-in-out infinite}.searching small{opacity:1}
       @keyframes inspect{0%,100%{transform:translate(0,0) rotate(-8deg)}50%{transform:translate(3px,-2px) rotate(8deg)}}
       @media(prefers-reduced-motion:reduce){.click .pulse,.searching .loupe{animation:none}}
@@ -64,6 +65,22 @@
     if (host.showPopover) {
       host.setAttribute('popover','manual');
       try { host.showPopover(); } catch (_) { host.removeAttribute('popover'); }
+    }
+  }
+  function emitClickAura(clicks=1){
+    if(!host?.isConnected||suspended)return;
+    const px=x,py=y;
+    const layer=pointer.parentNode;
+    for(let index=0;index<Math.min(2,Math.max(1,Number(clicks)||1));index++){
+      const wave=document.createElement('i');wave.className='click-aura';
+      wave.style.left=`${px}px`;wave.style.top=`${py}px`;
+      layer.append(wave);
+      const animation=wave.animate(reduced()?[{opacity:.4},{opacity:0}]:[
+        {opacity:0,transform:'translate(-50%,-50%) scale(.15)'},
+        {opacity:.65,transform:'translate(-50%,-50%) scale(.4)',offset:.15},
+        {opacity:0,transform:'translate(-50%,-50%) scale(1.8)'}
+      ],{duration:520,delay:index*95,easing:'cubic-bezier(.16,1,.3,1)',fill:'both'});
+      animation.finished.catch(()=>{}).finally(()=>wave.remove());
     }
   }
   function rest() {
@@ -82,7 +99,7 @@
     if (!active) { endScan(); savePosition(true); }
     if (!active) rest();
   }
-  function indicate(element, label = 'Clique', point = null) {
+  function indicate(element, label = 'Clique', point = null, clicks = 1) {
     endScan();
     actionSet = true;
     mount(); clearTimeout(timer);
@@ -93,7 +110,7 @@
     caption.textContent = label;
     pointer.classList.remove('click', 'idle', 'searching'); host.dataset.state = 'acting';
     void pointer.offsetWidth;
-    if (label === 'Clique') pointer.classList.add('click');
+    if (label === 'Clique') {pointer.classList.add('click');emitClickAura(clicks);}
     rest();
   }
   async function move(element, label = 'Clique', point = null) {

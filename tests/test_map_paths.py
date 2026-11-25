@@ -203,6 +203,7 @@ class MapPathsTests(unittest.TestCase):
                         os.replace(temp, base / 'reply.json')
                         return
                     time.sleep(.02)
+            executor._superficie_desktop_ativa = True
             worker = threading.Thread(target=agent)
             worker.start()
             with patch.dict(os.environ, {'FLOWDETECT_MAP_BRIDGE_DIR': str(base)}):
@@ -211,5 +212,20 @@ class MapPathsTests(unittest.TestCase):
             self.assertEqual(result['acao'], 'ir_para_bloco')
             self.assertEqual(result['bloco'], 1)
             self.assertEqual(received[0]['entryOrder'], 2)
+            self.assertIs(received[0]['returningFromDesktop'], True)
             self.assertEqual(received[0]['automation']['map_boundary']['orders'], [1])
             self.assertEqual(len(received[0]['automation']['steps']), 1)
+
+
+class ExecutorOutputEncodingTests(unittest.TestCase):
+    def test_windows_child_output_preserves_chrome_errors_in_utf8(self):
+        import io
+        import executar_automacao as runner
+        output, errors = io.BytesIO(), io.BytesIO()
+        stdout = io.TextIOWrapper(output, encoding='cp1252')
+        stderr = io.TextIOWrapper(errors, encoding='cp1252')
+        with patch.object(sys, 'stdout', stdout), patch.object(sys, 'stderr', stderr):
+            runner.configurar_saida_executor()
+            runner.safe_print('P\u00e1gina Chrome n\u00e3o vinculada \u2014 extens\u00e3o atual.', flush=True)
+        self.assertEqual(output.getvalue().decode('utf-8').replace('\r\n', '\n'), 'P\u00e1gina Chrome n\u00e3o vinculada \u2014 extens\u00e3o atual.\n')
+        self.assertEqual(stderr.encoding, 'utf-8')

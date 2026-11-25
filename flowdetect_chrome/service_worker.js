@@ -4,9 +4,9 @@ import { PAGE_RUN_PREFIX, PAGES_KEY, getPages, createPage, bindPage, unbindPage,
 import { tableWorkbookDataUrl } from "./table-workbook.js";
 import {installDemonstration} from './demonstration.js';
 const desktopOutlineTabs=new Set();
-async function updatePageOutline(tabId, page) {
+async function updatePageOutline(tabId, page, { returning = false } = {}) {
   if (!Number.isInteger(tabId)) return;
-  const update = { type: "flowdetect-page-outline-update", page: desktopOutlineTabs.has(tabId)?null:page || null };
+  const update = { type: "flowdetect-page-outline-update", page: desktopOutlineTabs.has(tabId)?null:page || null, returningFromDesktop: returning };
   try {
     if ((await chrome.tabs.sendMessage?.(tabId, update))?.ok) return;
   } catch (_) { /* Pages opened before installation might not have the script. */ }
@@ -230,8 +230,9 @@ async function handleStudioChainJob(job) {
   if (chainRuns.size > 100) for (const [id, run] of chainRuns) { if (!activeRuns.has(id)) chainRuns.delete(id); }
   await chrome.tabs.update(tab.id, { active: true });
   await chrome.windows.update(tab.windowId, { focused: true });
+  const returning=job.returningFromDesktop===true||desktopOutlineTabs.has(tab.id);
   desktopOutlineTabs.delete(tab.id);
-  await updatePageOutline(tab.id,page);
+  await updatePageOutline(tab.id,page,{returning});
   return new Promise(resolve => {
     executeAutomation(automation, tab.id, 1, null, [], null, page.id, run => {
       chainRuns.set(run.id, run);
@@ -583,12 +584,20 @@ async function sendToPage(tabId, message) {
   };
   const limite = Date.now() + timeoutDaPagina(versionedMessage);
   let ultimoErro = null;
+  let runtimePrepared = false;
   while (Date.now() < limite) {
     try {
       await esperarAbaPronta(tabId, Math.min(1200, Math.max(250, limite - Date.now())));
       const contentRuntime = await chrome.tabs.sendMessage(tabId, {
         type: "flowdetect-content-runtime-v2"
       }).catch(() => null);
+      if (!contentRuntime && !runtimePrepared && chrome.scripting?.executeScript) {
+        // Existing tabs do not receive content scripts when an unpacked extension
+        // is installed from a different folder. Prepare this exact tab once.
+        runtimePrepared = true;
+        await chrome.scripting.executeScript({target:{tabId},files:["page-outline.js","automation-cursor.js","content.js"]});
+        continue;
+      }
       if (!contentRuntime) {
         ultimoErro = new Error("Recarregue a pagina do site apos atualizar a extensao FlowDetect.");
         await sleep(180);

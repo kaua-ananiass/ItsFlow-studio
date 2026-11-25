@@ -10,6 +10,7 @@
   const PALETTE = new Set(["#12b5cb", "#8b5cf6", "#4ade80", "#f59e0b"]);
   let host = null;
   let transition=null;
+  let tagTransition=null;
 
   async function leaveForDesktop(){
     if(!host)return;
@@ -23,12 +24,15 @@
   }
 
   function removeOutline() {
+    transition?.cancel();transition=null;
+    tagTransition?.cancel();tagTransition=null;
     host?.remove();
     host = null;
   }
 
-  function applyOutline(page) {
+  function applyOutline(page,{returning=false}={}) {
     transition?.cancel();transition=null;
+    tagTransition?.cancel();tagTransition=null;
     if (!page?.id || !PALETTE.has(page.color)) {
       removeOutline();
       return;
@@ -67,10 +71,26 @@
       host.__flowdetectSurface=surface;
       host.__flowdetectTag = tag;
       document.documentElement.append(host);
-      if(!matchMedia('(prefers-reduced-motion: reduce)').matches)surface.animate([{opacity:0,transform:'scale(1.012)'},{opacity:1,transform:'scale(1)'}],{duration:320,easing:'cubic-bezier(.22,1,.36,1)'});
+      if(!returning&&!matchMedia('(prefers-reduced-motion: reduce)').matches)transition=surface.animate([{opacity:0,transform:'scale(1.012)'},{opacity:1,transform:'scale(1)'}],{duration:320,easing:'cubic-bezier(.22,1,.36,1)'});
     }
     host.style.setProperty("--fd-color", page.color);
-    host.__flowdetectTag.textContent = `FlowDetect · ${String(page.name || "Página")}`;
+    const label=`itsflow · ${String(page.name || "Página")}`;
+    host.__flowdetectTag.textContent = label;
+    if(returning&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      const current=host;
+      host.__flowdetectTag.textContent='itsflow · Voltando ao Chrome';
+      const animation=current.__flowdetectSurface.animate([
+        {opacity:0,transform:'scale(.988)',filter:'brightness(1.6)'},
+        {opacity:1,transform:'scale(1)',filter:'brightness(1.35)',offset:.48},
+        {opacity:1,transform:'scale(1)',filter:'brightness(1)'}
+      ],{duration:880,easing:'cubic-bezier(.22,1,.36,1)'});
+      transition=animation;
+      tagTransition=current.__flowdetectTag.animate([
+        {opacity:0,transform:'translateY(-8px)'},
+        {opacity:1,transform:'translateY(0)'}
+      ],{duration:650,easing:'cubic-bezier(.22,1,.36,1)'});
+      animation.finished.then(()=>{if(host===current&&transition===animation){current.__flowdetectTag.textContent=label;transition=null;}}).catch(()=>{});
+    }
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -79,7 +99,7 @@
       return true;
     }
     if (message?.type !== "flowdetect-page-outline-update") return false;
-    applyOutline(message.page || null);
+    applyOutline(message.page || null,{returning:message.returningFromDesktop===true});
     sendResponse?.({ ok: true });
     return false;
   });

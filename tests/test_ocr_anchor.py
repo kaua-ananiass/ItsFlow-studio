@@ -370,6 +370,33 @@ class OcrAnchorTests(unittest.TestCase):
         self.executor.confirmar_ocr_relativo.assert_not_called()
         self.assertEqual(self.executor.clicar_area_reconhecida.call_args.kwargs["offset_x"], 7)
 
+    def test_individual_ocr_actions_show_confirmation_before_early_return(self):
+        for action in ("confirmar", "clicar", "ir_para_bloco"):
+            with self.subTest(action=action):
+                self.executor.procurar_imagem_por_template.return_value = {
+                    "left": 1980, "top": -10, "width": 240, "height": 100,
+                }
+                local = self.search(self.candidate())
+                self.executor.resolver_imagem = Mock(return_value=(Path(__file__), "ref"))
+                self.executor.obter_dimensoes_imagem = Mock(return_value=(240, 100))
+                self.executor.esperar_imagem = Mock(return_value=local)
+                self.executor.salvar_variavel_contexto = Mock()
+                self.executor.confirmar_ocr_relativo = Mock(side_effect=AssertionError("OCR repeated"))
+                calls = []
+                def marker(*args, **kwargs):
+                    if kwargs.get("tema") == "ocr_confirmado":
+                        calls.append("confirmation")
+                self.executor.marcar_area_reconhecida = Mock(side_effect=marker)
+                self.executor.aplicar_acao_individual_ocr = Mock(side_effect=lambda *a, **k: calls.append(action) or action)
+                with patch.object(motor.time, "sleep"):
+                    result = self.executor.clicar_imagem("reference.png", texto_ocr_esperado="Meu Perfil => 135", leitura_relativa=self.config)
+                self.assertIs(result, local)
+                self.assertEqual(calls, ["confirmation", action])
+                markers = [c for c in self.executor.marcar_area_reconhecida.call_args_list if c.kwargs.get("tema") == "ocr_confirmado"]
+                self.assertEqual(len(markers), 1)
+                self.assertEqual(markers[0].kwargs["etiqueta"], "OCR encontrado")
+                self.assertTrue(markers[0].kwargs["bloqueante"])
+
     def test_click_is_blocked_when_only_the_ocr_step_is_confirmed(self):
         pendente = self.search(self.candidate())
         self.executor.resolver_imagem = Mock(return_value=(Path(__file__), "ref"))
@@ -791,10 +818,11 @@ class OcrAnchorTests(unittest.TestCase):
         executor.adotar_janela_ativa_para_ocr = Mock(side_effect=AssertionError("Nao deve fixar a janela ativa"))
         executor.ativar_janela_alvo = Mock(side_effect=AssertionError("Nao deve ativar nenhuma janela"))
         executor.localizar_janela_alvo = Mock(side_effect=AssertionError("Nao deve procurar ou trocar janela"))
-        executor.localizar_referencia_hibrida_ocr_visual = Mock(return_value={
-            "left": 824, "top": 140, "width": 99, "height": 52,
-            "visual_confirmed": True,
-        })
+        confirmed={"left":824,"top":140,"width":99,"height":52,"visual_confirmed":True}
+        failed={"ocr_target_individual":True,"ocr_target_flow":{"acao":"parar"}}
+        executor.localizar_referencia_hibrida_ocr_visual=Mock(
+            side_effect=lambda *args,**kwargs: confirmed if kwargs['region']==(0,0,1920,1080) else failed
+        )
         executor.registrar_reconhecimento_bem_sucedido = Mock()
 
         with patch.object(motor, "OCR_DISPONIVEL", True), patch.object(motor, "OPENCV_DISPONIVEL", True):
@@ -809,7 +837,7 @@ class OcrAnchorTests(unittest.TestCase):
             )
 
         self.assertTrue(encontrado["visual_confirmed"])
-        executor.obter_janela_ativa.assert_not_called()
+        executor.obter_janela_ativa.assert_called_once()
         executor.adotar_janela_ativa_para_ocr.assert_not_called()
         executor.ativar_janela_alvo.assert_not_called()
         executor.localizar_janela_alvo.assert_not_called()
@@ -818,19 +846,20 @@ class OcrAnchorTests(unittest.TestCase):
             (0, 0, 1920, 1080),
         )
         executor.registrar_reconhecimento_bem_sucedido.assert_called_once()
+        self.assertEqual([call.kwargs['region'] for call in executor.localizar_referencia_hibrida_ocr_visual.call_args_list],[(530,116,604,690),(0,0,1920,1080)])
 
-        # Uma falha decidida pela aba "Acoes por OCR" precisa sair da busca
-        # hibrida imediatamente; ela nao pode cair na regra geral do card.
+        # An individual failure keeps its configured route after timeout,
+        # rather than replacing it with the generic card failure.
         fluxo_ocr = {
             "ocr_target_individual": True,
             "ocr_target_index": 1,
             "ocr_target_flow": {"acao": "parar"},
         }
-        executor.localizar_referencia_hibrida_ocr_visual.reset_mock(return_value=True)
+        executor.localizar_referencia_hibrida_ocr_visual.reset_mock(return_value=True,side_effect=True)
         executor.localizar_referencia_hibrida_ocr_visual.return_value = fluxo_ocr
         encontrado_fluxo = executor.esperar_imagem(
             "sped_001",
-            timeout=3,
+            timeout=.15,
             confianca=0.8,
             perfil_busca="balanced",
             modo_area_busca="target_window",
@@ -838,6 +867,18 @@ class OcrAnchorTests(unittest.TestCase):
             leitura_relativa={"largura": 71, "altura": 22, "offset_x": -3, "offset_y": 4},
         )
         self.assertIs(encontrado_fluxo, fluxo_ocr)
+
+        executor.localizar_referencia_hibrida_ocr_visual.reset_mock(return_value=True)
+        executor.obter_janela_ativa.reset_mock()
+        explorer={'title':'Explorador','left':1100,'top':200,'width':700,'height':600}
+        executor.obter_janela_ativa.side_effect=[janela_ativa]+[explorer]*100
+        executor.localizar_referencia_hibrida_ocr_visual.side_effect=lambda *args,**kwargs: confirmed if kwargs['region']==(1100,200,700,600) else failed
+        now=[100.0]
+        with patch.object(motor.time,'perf_counter',side_effect=lambda:now[0]),patch.object(motor.time,'sleep',side_effect=lambda delay:now.__setitem__(0,now[0]+delay)):
+            result=executor.esperar_imagem('sped_001',timeout=3,confianca=.8,perfil_busca='balanced',modo_area_busca='target_window',texto_ocr_esperado='Downloads',leitura_relativa={'largura':71,'altura':22})
+        self.assertIs(result,confirmed)
+        self.assertGreaterEqual(executor.obter_janela_ativa.call_count,2)
+        executor.ativar_janela_alvo.assert_not_called()
 
     def test_hybrid_execution_keeps_an_inherited_window_passive(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
@@ -1207,6 +1248,37 @@ class OcrGuidedVisualTests(unittest.TestCase):
         self.assertEqual((correto["left"], correto["top"]), (190, 100))
         self.assertGreater(correto["score"], 0.55)
         self.assertIsNone(distante)
+
+    def test_single_ocr_anchor_accepts_selected_control_at_another_monitor_scale(self):
+        import tempfile
+        from PIL import ImageFont
+        reference=motor.Image.new('RGB',(121,39),(13,13,13))
+        draw=motor.ImageDraw.Draw(reference)
+        draw.line([(18,12),(18,26),(12,20),(18,26),(24,20)],fill='#24c8b4',width=2)
+        draw.text((31,12),'Downloads',font=ImageFont.load_default(size=12),fill='white')
+        executor=motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.limitar_regiao=lambda area,**kwargs:area
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'reference.png';reference.save(path)
+            for scale in (1.0,1.25,1.5,2.0):
+                for selected in (False,True):
+                    with self.subTest(scale=scale,selected=selected):
+                        image=reference.copy()
+                        if selected:
+                            pixels=motor.np.array(image)
+                            pixels[(pixels.max(axis=2)-pixels.min(axis=2)<5)&(pixels.max(axis=2)<40)]=[55,60,65]
+                            image=motor.Image.fromarray(pixels)
+                        image=image.resize((round(121*scale),round(39*scale)),motor.Image.Resampling.LANCZOS)
+                        screen=motor.Image.new('RGB',(800,300),(13,13,13));screen.paste(image,(190,100))
+                        executor.capturar_tela_pil=lambda region=None:(screen.crop((region[0],region[1],region[0]+region[2],region[1]+region[3])),region[0],region[1])
+                        anchor={'left':round(190+(image.width-121)/2),'top':round(100+(image.height-39)/2),'width':121,'height':39}
+                        result=executor.confirmar_visual_proximo_ocr(anchor,str(path))
+                        self.assertIsNotNone(result)
+                        self.assertAlmostEqual(result['scale'],scale,delta=.06)
+                        self.assertAlmostEqual(result['left'],190,delta=3)
+                        # A similar image elsewhere cannot validate this OCR.
+                        distant={**anchor,'left':600,'top':210}
+                        self.assertIsNone(executor.confirmar_visual_proximo_ocr(distant,str(path)))
 
     def test_hybrid_rechecks_wider_crop_when_saved_ocr_box_cuts_the_word(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
