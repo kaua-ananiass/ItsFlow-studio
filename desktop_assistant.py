@@ -15,6 +15,49 @@ import time
 import uuid
 from pathlib import Path
 
+MANUAL_KINDS = ('manual_text', 'manual_keys', 'manual_sheet')
+
+def validate_manual(event, complete=False, helper=None):
+    """Validate local wizard data again at the import boundary."""
+    if event.get('kind') not in MANUAL_KINDS:raise ValueError('Tipo de bloco inválido.')
+    for field,limit in (('label',100),('description',1000),('value',4000),('workbook',240),('sheet',100),('column',200)):
+        if field in event and (not isinstance(event[field],str) or len(event[field])>limit):raise ValueError(f'Campo inválido: {field}.')
+    for field,default,maximum in (('delay',0,3600),('interval',0,3600),('repetitions',1,1000)):
+        value=event.get(field,default)
+        if type(value) not in (int,float) or not 0<=value<=maximum or (field=='repetitions' and (int(value)!=value or value<1)):raise ValueError('Tempo ou repetições inválidos.')
+    if type(event.get('loop',False)) is not bool:raise ValueError('Escolha se deseja repetir a seção por linha.')
+    if event.get('after_action','nenhuma') not in ('nenhuma','enter','tab'):raise ValueError('Ação após item inválida.')
+    if type(event.get('builder_stage',0)) is not int or not 0<=event.get('builder_stage',0)<=4:raise ValueError('Etapa inválida.')
+    if complete:
+        if event['kind'] in ('manual_text','manual_keys') and not event.get('value','').strip():raise ValueError('Informe o texto ou a tecla do bloco.')
+        if event['kind']=='manual_keys':
+            if helper is None:
+                # Recorder validation must also work in the isolated runtime.
+                spec=importlib.util.spec_from_file_location('itsflow_manual_generator',Path(__file__).resolve().with_name('gerenciar_roteiro.py'))
+                if spec is None or spec.loader is None:raise ValueError('Não foi possível carregar a configuração de teclas.')
+                helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(helper)
+            keys=helper.parse_keys_string(event['value'])
+            import pyautogui
+            if any(helper.tecla_para_pyautogui(key) not in pyautogui.KEYBOARD_KEYS for key in keys):raise ValueError('Tecla desconhecida. Use, por exemplo, p, enter ou ctrl+a.')
+        if event['kind']=='manual_sheet':
+            if not all(event.get(key,'').strip() for key in ('workbook','sheet','column')):raise ValueError('Envie a planilha e escolha a aba e a coluna.')
+            path=Path(event['workbook'])
+            if path.is_absolute() or '..' in path.parts or path.suffix.lower() not in ('.xlsx','.xlsm','.xltx','.xltm'):raise ValueError('Planilha inválida.')
+
+def compile_manual(helper, events):
+    blocks=[]
+    for event in events:
+        validate_manual(event,True,helper)
+        if not event.get('confirmed'):raise ValueError('Confirme o bloco antes de enviar.')
+        delay=event.get('delay',0)
+        if event['kind']=='manual_text':block=helper.criar_bloco_texto(event['value'],delay)
+        elif event['kind']=='manual_keys':block=helper.criar_bloco_teclas(event['value'],delay,repeticoes=int(event.get('repetitions',1)))
+        else:block=helper.criar_bloco_planilha(event['sheet'],event['column'],delay,event.get('after_action','nenhuma'),event.get('interval',0),workbook_file=event['workbook'])
+        block['ordem']=len(blocks)+1
+        block.setdefault('detalhes',{}).update(nome=event.get('label') or 'Novo bloco',demonstration_description=event.get('description',''))
+        blocks.append(block)
+    return {'eventos':blocks}
+
 
 def encode_image(image):
     image=image.copy();image.thumbnail((1200,800))
@@ -54,6 +97,7 @@ class Draft:
         event['description']=text.strip()[:1000];self.save()
     def validate_current(self):
         event=self.current()
+        if event and event.get('kind') in MANUAL_KINDS:validate_manual(event,True)
         if event and not event.get('description'):raise ValueError('Explique a etapa antes de continuar.')
         if event and event.get('kind')=='desktop_text' and not str(event.get('value') or '').strip():raise ValueError('Informe o texto ou {{VARIAVEL}} que será escrito no campo antes de continuar.')
         if event and event.get('requires_confirmation') and not event.get('confirmed'):raise ValueError('Confirme o bloco na prévia antes de selecionar outra área.')
@@ -73,11 +117,12 @@ class Recorder:
     def __init__(self,config,emit):
         self.config=config;self.draft=Draft(config);self.emit=emit;self.open=False;self.armed=False;self.busy=False;self.capturing=False
         self.error='';self.status='Uma ação por vez';self.request_id=None;self.operation=None
+        self.testing=False;self.test_result=None
         self.queue=queue.Queue();self.stop=threading.Event()
         if not self.draft.state['messages']:self.message('assistant','Selecione a área de um botão, campo ou mensagem. Vamos escolher sua finalidade e construir o bloco sem acionar o aplicativo.')
     def message(self,role,text):
         self.draft.state['messages']=(self.draft.state['messages']+[{'role':role,'content':str(text)}])[-20:];self.draft.save()
-    def snapshot(self):return {**self.draft.state,'open':self.open,'armed':self.armed,'busy':self.busy,'capturing':self.capturing,'error':self.error,'status':self.status}
+    def snapshot(self):return {**self.draft.state,'open':self.open,'armed':self.armed,'busy':self.busy,'capturing':self.capturing,'error':self.error,'status':self.status,'testing':self.testing,'test_result':self.test_result}
     def publish(self):self.emit({'type':'state','state':self.snapshot()})
     def complete_import(self,revision):
         if not isinstance(revision,str) or not revision:raise ValueError('Não foi possível atualizar o destino. Tente novamente.')
@@ -88,6 +133,11 @@ class Recorder:
         self.busy=True;self.error='';self.operation=operation;self.request_id=str(uuid.uuid4());self.status='Pensando na sua etapa…' if operation=='chat' else 'Salvando no mapa…'
         state=self.draft.state;current=self.draft.current()
         summary=[{'id':e['id'],'kind':e['kind'],'label':e.get('label','Etapa'),'description':e.get('description',''),'url':'desktop://local','text':e.get('text',''),'source':e.get('source','selection'),'builder_stage':e.get('builder_stage',0),'recognition':e.get('recognition','image'),'clicks':e.get('clicks',1),'on_success':e.get('on_success','continuar'),'on_failure':e.get('on_failure','parar')} for e in state['events']]
+        for item,event in zip(summary,state['events']):
+            if event['kind'] in MANUAL_KINDS:
+                # Explicit chat questions receive configuration, never workbook rows.
+                configuration={key:event[key] for key in ('value','repetitions','delay','sheet','column','loop','after_action','interval') if key in event}
+                item['description']=(item['description']+'\nConfiguração local: '+json.dumps(configuration,ensure_ascii=False))[:1000]
         history=state['messages'][:-1] if state['messages'] and state['messages'][-1]['role']=='user' and state['messages'][-1]['content']==prompt else state['messages']
         packet={'type':'request','request_id':self.request_id,'operation':operation,'automation_id':state['automation']['id'],
                 'engine':'desktop','target_section':state.get('target_section'),'prompt':prompt,'history':history[-8:],'events':summary if operation=='chat' else state['events'],
@@ -104,6 +154,15 @@ class Recorder:
         current=self.draft.current()
         if not current or self.draft.state['imported']:raise ValueError('Selecione uma área antes de configurar.')
         update=dict(current);kind=packet.get('kind',current['kind'])
+        if current['kind'] in MANUAL_KINDS:
+            if kind!=current['kind']:raise ValueError('Crie outro bloco para mudar o tipo.')
+            for key in ('label','description','value','delay','interval','repetitions','workbook','sheet','column','loop','after_action','builder_stage'):
+                if key in packet:update[key]=packet[key]
+            validate_manual(update,packet.get('op')=='confirm')
+            changed=any(update.get(key)!=current.get(key) for key in update if key not in ('confirmed','builder_stage'))
+            update['confirmed']=False if changed else current.get('confirmed',False)
+            self.draft.state['events'][self.draft.state['events'].index(current)]=update
+            self.error='';self.draft.save();return
         if kind not in ('desktop_click','desktop_text','observe','desktop_validation'):raise ValueError('Tipo de bloco inválido.')
         update['kind']=kind
         if kind!=current['kind']:
@@ -143,6 +202,14 @@ class Recorder:
         update['confirmed']=False if changed else current.get('confirmed',False);self.error=''
         self.draft.state['events'][self.draft.state['events'].index(current)]=update;self.draft.save()
     def command(self,packet):
+        if packet.get('op')=='test_begin':
+            if self.busy or self.capturing:raise ValueError('Aguarde a etapa atual.')
+            self.testing=True;self.busy=True;self.open=False;self.test_result=None;self.error=''
+            self.status='Testando bloco '+str(packet.get('order',''))+'…';self.publish();return
+        if packet.get('op')=='test_finish':
+            self.testing=False;self.busy=False;self.test_result=packet.get('result',{})
+            self.status='Alvo encontrado' if self.test_result.get('ok') else 'Teste não confirmado'
+            self.publish();return
         if packet.get('request_id'):
             if packet['request_id']!=self.request_id:return
             self.busy=False;self.request_id=None
@@ -172,7 +239,14 @@ class Recorder:
         if op=='show' or op=='open':self.open=True;self.armed=False;self.publish();return
         if op=='collapse':self.open=False;self.armed=False;self.publish();return
         if self.busy:raise ValueError('Aguarde a resposta atual.')
-        if op=='arm':
+        if op=='create':
+            kind=packet.get('kind')
+            if kind not in MANUAL_KINDS:raise ValueError('Escolha texto, tecla ou planilha.')
+            if self.draft.state['events']:raise ValueError('Envie ou descarte o bloco atual antes de criar outro.')
+            label={'manual_text':'Digitar texto','manual_keys':'Pressionar tecla','manual_sheet':'Usar planilha'}[kind]
+            self.draft.append({'kind':kind,'label':label,'description':label,'value':'','requires_confirmation':True,'confirmed':False,'builder_stage':0})
+            self.open=True;self.error='';self.status='Configure seu bloco'
+        elif op=='arm':
             return self.command({**packet,'op':'capture'})
         elif op=='explain':
             text=str(packet.get('text','')).strip()[:4000]
@@ -186,6 +260,7 @@ class Recorder:
         elif op=='edit':self.configure(packet)
         elif op=='confirm':
             self.configure(packet);current=self.draft.current()
+            if current['kind'] in MANUAL_KINDS:validate_manual(current,True)
             if not current.get('description','').strip():raise ValueError('Descreva a finalidade do bloco no campo ou no chat.')
             if current['kind']=='desktop_text' and not current.get('value','').strip():raise ValueError('Informe o texto ou variável que será digitado.')
             if current.get('recognition')=='ocr' and not current.get('text','').strip():raise ValueError('Informe o texto esperado no reconhecimento OCR.')
@@ -197,10 +272,13 @@ class Recorder:
             self.draft.state['sections']=packet.get('sections',[])
             self.draft.state['revision']=packet['revision']
             if self.draft.state.get('target_section') not in {s['id'] for s in self.draft.state['sections']}|{'__new__'}:self.draft.state['target_section']=None
+            if any(s['id']==self.draft.state.get('target_section') and (s.get('insertion') or {}).get('allowed') is False for s in self.draft.state['sections']):self.draft.state['target_section']=None
             self.error='';self.draft.save()
         elif op=='destination':
             target=packet.get('target_section')
             if target!='__new__' and target not in {s['id'] for s in self.draft.state.get('sections',[])}:raise ValueError('Escolha uma se\u00e7\u00e3o dispon\u00edvel.')
+            section=next((s for s in self.draft.state.get('sections',[]) if s['id']==target),{})
+            if (section.get('insertion') or {}).get('allowed') is False:raise ValueError(section['insertion']['reason'])
             self.draft.state['target_section']=target;self.error='';self.draft.save()
         elif op=='import':
             self.draft.validate_current()
@@ -209,6 +287,7 @@ class Recorder:
             self.request('import');return
         elif op=='refresh':self.request('status');return
         elif op=='capture':
+            if any(e.get('kind') in MANUAL_KINDS for e in self.draft.state['events']):raise ValueError('Envie este bloco ao mapa antes de selecionar uma área.')
             if self.draft.state['imported']:raise ValueError('Demonstração já enviada. Feche e abra para iniciar outra.')
             self.draft.next();self.armed=False;self.open=False;self.capturing=True;self.error='';self.status='Capturando área…';self.publish()
             # Native overlays are excluded from screen capture. Keep them visible

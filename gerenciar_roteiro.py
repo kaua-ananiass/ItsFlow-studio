@@ -3557,11 +3557,12 @@ def comando_caminhos_mapa(args):
     else:
         pedido = json.loads(args.request)
     payload = carregar_e_normalizar()
-    if pedido.get('action') in ('demonstration_import','demonstration_context'):
+    if pedido.get('action') in ('demonstration_import','demonstration_context','demonstration_tests'):
         import importlib.util
         spec=importlib.util.spec_from_file_location('chrome_demonstration',Path(__file__).resolve().with_name('chrome_demonstration.py'))
         chrome_demonstration=importlib.util.module_from_spec(spec);spec.loader.exec_module(chrome_demonstration)
         if pedido.get('action')=='demonstration_context':return chrome_demonstration.section_context(sys.modules[__name__],payload)
+        if pedido.get('action')=='demonstration_tests':return chrome_demonstration.test_catalog(sys.modules[__name__],payload,pedido)
         return chrome_demonstration.import_demo(sys.modules[__name__],payload,pedido)
     acao = pedido.get("action")
     if acao in {"ai_guide_context", "ai_guide_validate", "ai_guide_create", "ai_guide_update", "ai_assist_apply", "ai_assist_undo"}:
