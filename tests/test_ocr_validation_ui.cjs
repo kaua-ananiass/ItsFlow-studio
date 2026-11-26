@@ -57,6 +57,27 @@ function report(failedIndex = -1, visualConfirmed = true) {
   };
 }
 
+test("screen hybrid diagnostic retains the image even when the text matches", async () => {
+  const { context } = fixture();
+  const calls=[];
+  context.invoke=async (name,args)=>{calls.push({name,args});return 'Reconhecimento concluido com sucesso.';};
+  const result=await context.runScreenOcrDiagnostic({values:{imagePath:'imagens/downloads.png',recognitionMode:'texto_ocr',ocrText:'Downloads',ocrTargetLayouts:[]},texts:['Downloads'],options:{}});
+  assert.equal(result.ok,true);
+  assert.equal(result.visualRequired,true);
+  assert.equal(calls[0].name,'test_image_recognition');
+  assert.equal(calls[0].args.imagem,'imagens/downloads.png');
+  assert.equal(calls[0].args.textoOcrEsperado,'Downloads');
+  assert.equal(calls[0].args.telaInteira,true);
+});
+
+test("screen hybrid does not report success when only OCR matches", async () => {
+  const { context } = fixture();
+  context.invoke=async ()=>{throw 'Imagem não confirmou a referência.';};
+  const result=await context.runScreenOcrDiagnostic({values:{imagePath:'imagens/downloads.png',recognitionMode:'texto_ocr',ocrText:'Downloads'},texts:['Downloads'],options:{}});
+  assert.equal(result.ok,false);
+  assert.equal(result.results[0].found,false);
+});
+
 test("Procurar keeps all five ordered OCR diagnostics when the command throws", async () => {
   const { context, panel, messages } = fixture();
   const payload = report(2, false);
