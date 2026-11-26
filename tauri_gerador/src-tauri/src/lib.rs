@@ -2131,6 +2131,7 @@ fn run_python_script(
 fn run_helper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
     ensure_python_script_integrity(root, "chatgpt_guided.py")?;
     ensure_python_script_integrity(root, "chrome_demonstration.py")?;
+    ensure_python_script_integrity(root, "desktop_assistant.py")?;
     ensure_python_script_integrity(root, "block_knowledge.json")?;
     let raw = run_python_script(root, "gerenciar_roteiro.py", args)?;
     serde_json::from_str(&raw)
@@ -9190,6 +9191,7 @@ fn test_image_recognition(
     leitura_relativa_offset_y: Option<i64>,
     leitura_relativa_salvar_em: Option<String>,
     ocr_target_layouts: Option<String>,
+    tela_inteira: Option<bool>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
     let script_path = root.join("executar_automacao.py");
@@ -9225,6 +9227,7 @@ fn test_image_recognition(
     });
     let worker_payload = serde_json::json!({
         "imagem": imagem.clone(),
+        "tela_inteira": tela_inteira.unwrap_or(false),
         "timeout": timeout.max(0.1),
         "confianca": confianca,
         "perfil_busca": perfil_busca_resolvido,

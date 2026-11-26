@@ -4,6 +4,9 @@ use windows::Win32::Foundation::{WPARAM,LRESULT};
 const WINDOW:&str="desktop-assistant";
 struct Companion{child:Child,input:Arc<Mutex<ChildStdin>>,snapshot:Value}
 static COMPANION:Mutex<Option<Companion>>=Mutex::new(None);
+static TEST_BUSY:AtomicBool=AtomicBool::new(false);
+struct TestGuard;
+impl Drop for TestGuard{fn drop(&mut self){TEST_BUSY.store(false,Ordering::SeqCst);}}
 
 #[cfg(windows)]
 const OVERLAY_SUBCLASS:usize=0x53594E43;
@@ -255,7 +258,7 @@ fn show_auras(app:&AppHandle,monitor:&tauri::Monitor,prefix:&str){
 }
 
 fn valid_assistant_control(op:&str)->bool{
-    ["arm","open","collapse","close","explain","retry","edit","confirm","undo","import","refresh","capture","destination"].contains(&op)
+    ["arm","open","collapse","close","explain","retry","edit","confirm","undo","import","refresh","capture","destination","create"].contains(&op)
 }
 
 #[cfg(test)]
@@ -272,6 +275,77 @@ mod section_control_tests{
 pub async fn desktop_assistant_action(app:AppHandle,request:Value)->Result<Value,String>{
     let op=request["op"].as_str().unwrap_or("status");
     if op=="drag"{return Ok(serde_json::json!({"accepted":true}));}
+    if op=="test_catalog"||op=="test_block"{
+        let (automation,input)={
+            let guard=COMPANION.lock().map_err(|_|"Assistente indisponível")?;
+            let companion=guard.as_ref().ok_or("Abra o assistente no Studio.")?;
+            if companion.snapshot["busy"]==true||companion.snapshot["capturing"]==true{return Err("Aguarde a etapa atual.".into());}
+            (companion.snapshot["automation"]["id"].clone(),companion.input.clone())
+        };
+        let root=workspace_root(&app);
+        if op=="test_catalog"{
+            return tauri::async_runtime::spawn_blocking(move||run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"demonstration_tests","automation_id":automation}).to_string()])).await.map_err(|e|e.to_string())?;
+        }
+        if TEST_BUSY.compare_exchange(false,true,Ordering::SeqCst,Ordering::SeqCst).is_err(){return Err("Já existe um teste em andamento.".into());}
+        let _test_guard=TestGuard;
+        if *app.state::<RuntimeState>().running.lock().map_err(|_|"Execução indisponível")?||get_remote_agent_snapshot(&root)["snapshot"]["running"]==true{return Err("Pare a automação antes de testar um bloco.".into());}
+        let mut payload=request.clone();payload["action"]=serde_json::json!("demonstration_tests");payload["automation_id"]=automation;
+        if !payload["order"].is_u64()||!payload["revision"].is_string()||!payload["block_id"].is_string(){return Err("Atualize a lista de blocos antes de testar.".into());}
+        let folder=root.clone();
+        let target=tauri::async_runtime::spawn_blocking(move||run_helper_json(&folder,&["map-paths".into(),"--request".into(),payload.to_string()])).await.map_err(|e|e.to_string())??;
+        let mode=request["mode"].as_str().unwrap_or("screen");
+        let capability=if mode=="chrome"{"test_chrome"}else if mode=="screen"{"test_screen"}else{return Err("Escolha Tela ou Chrome.".into());};
+        if target["block"][capability]!=true{return Err("Este reconhecimento não possui alvo configurado para este tipo de teste.".into());}
+        send(&input,&serde_json::json!({"op":"test_begin","order":request["order"]}))?;
+        // Fold the panel before looking at the target; keep the passive notch visible.
+        let chrome_mode=mode=="chrome";let target_copy=target.clone();
+        let result=tauri::async_runtime::spawn_blocking(move||{
+            thread::sleep(Duration::from_millis(400));
+            if chrome_mode{
+                let texts=target_copy["block"]["texts"].as_array().map(|items|items.iter().filter_map(|v|v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                let selector=target_copy["block"]["selector"].as_str().filter(|s|!s.is_empty()).map(str::to_string);
+                tauri::async_runtime::block_on(chrome_test_bridge::test_chrome_extension_recognition(texts,selector,None))
+            }else{
+                // Uses the same read-only worker and highlight as Procurar.
+                let _=fs::remove_file(root.join(".parar_automacao.flag"));let (ok,stdout,stderr)=test_image_recognition_worker(&root,target_copy["worker"].clone())?;
+                Ok(serde_json::json!({"ok":ok,"log":stdout.chars().take(12000).collect::<String>(),"error":stderr.chars().take(2000).collect::<String>()}))
+            }
+        }).await.map_err(|e|e.to_string()).and_then(|v|v);
+        let mut outcome=match result{Ok(v)=>v,Err(e)=>serde_json::json!({"ok":false,"error":e})};
+        outcome["order"]=request["order"].clone();outcome["mode"]=request["mode"].clone();
+        outcome["revision"]=target["revision"].clone();
+        send(&input,&serde_json::json!({"op":"test_finish","result":outcome}))?;
+        return Ok(outcome);
+    }
+    if op=="upload_workbook"{
+        {
+            let guard=COMPANION.lock().map_err(|_|"Assistente indisponível")?;
+            let companion=guard.as_ref().ok_or("Abra o assistente no Studio.")?;
+            if companion.snapshot["busy"]==true || !companion.snapshot["events"].as_array().map(|events|events.iter().any(|e|e["id"]==companion.snapshot["pending"]&&e["kind"]=="manual_sheet")).unwrap_or(false){return Err("Abra a criação de um bloco de planilha antes de enviar.".into());}
+        }
+        let name=request["file_name"].as_str().ok_or("Informe o nome da planilha.")?;
+        let extension=Path::new(name).extension().and_then(|v|v.to_str()).unwrap_or("").to_ascii_lowercase();
+        if !["xlsx","xlsm","xltx","xltm"].contains(&extension.as_str()){return Err("Envie uma planilha Excel (.xlsx ou .xlsm).".into());}
+        let values=request["bytes"].as_array().ok_or("Arquivo inválido.")?;
+        if values.is_empty()||values.len()>25*1024*1024{return Err("Envie uma planilha de até 25 MB.".into());}
+        let bytes:Vec<u8>=values.iter().map(|v|v.as_u64().filter(|n|*n<=255).map(|n|n as u8).ok_or("Arquivo inválido.")).collect::<Result<_,_>>()?;
+        let unique=format!("sync-{}-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos(),sanitize_workbook_filename(name));
+        let handle=app.clone();
+        return tauri::async_runtime::spawn_blocking(move||{
+            let result=import_workbook(handle.clone(),unique,bytes)?;
+            let parsed=(||->Result<Value,String>{
+                let metadata=get_workbook_meta(handle.clone())?;
+                let workbook=metadata["workbooks"].as_array().and_then(|items|items.iter().find(|item|item["id"]==result["workbook_id"])).cloned().ok_or("Não foi possível ler as abas da planilha.")?;
+                if !workbook["sheets"].as_array().map(|items|items.iter().any(|sheet|sheet["columns"].as_array().map(|v|!v.is_empty()).unwrap_or(false))).unwrap_or(false){return Err("Informe os nomes das colunas na primeira linha da planilha.".into());}
+                Ok(workbook)
+            })();
+            if parsed.is_err(){
+                let root=workspace_root(&handle);
+                if let Some(id)=result["workbook_id"].as_str(){if let Ok(path)=resolve_safe_workbook_path(&root,id){let _=fs::remove_file(path);}}
+            }
+            parsed
+        }).await.map_err(|e|e.to_string())?;
+    }
     if op=="map_sections"{
         let handle=app.clone();
         let context=tauri::async_runtime::spawn_blocking(move||chrome_demonstration_request(&handle,serde_json::json!({"operation":"status"}))).await.map_err(|error|error.to_string())??;
@@ -334,8 +408,8 @@ fn start(app:AppHandle)->Result<Value,String>{
             match packet["type"].as_str().unwrap_or(""){
                 "state"=>{
                     let snapshot=packet["state"].clone();let open=snapshot["open"]!=false;
-                    let changed=if let Ok(mut state)=COMPANION.lock(){if let Some(companion)=state.as_mut(){let changed=companion.snapshot["open"]!=snapshot["open"]||companion.snapshot["capturing"]!=snapshot["capturing"];companion.snapshot=snapshot.clone();changed}else{false}}else{false};
-                    if changed{capture_passthrough(&app,snapshot["capturing"]==true);layout(&app,open);}else if let Some(window)=app.get_webview_window(WINDOW){set_overlay_visible(&window,true);}
+                    let changed=if let Ok(mut state)=COMPANION.lock(){if let Some(companion)=state.as_mut(){let changed=companion.snapshot["open"]!=snapshot["open"]||companion.snapshot["capturing"]!=snapshot["capturing"]||companion.snapshot["testing"]!=snapshot["testing"];companion.snapshot=snapshot.clone();changed}else{false}}else{false};
+                    if changed{capture_passthrough(&app,snapshot["capturing"]==true||snapshot["testing"]==true);layout(&app,open);}else if let Some(window)=app.get_webview_window(WINDOW){set_overlay_visible(&window,true);}
                     let _=app.emit_to(WINDOW,"desktop-assistant-state",snapshot);
                 },
                 "hide"|"closed"=>{if packet["type"]=="closed"{if let Ok(mut state)=COMPANION.lock(){if let Some(companion)=state.as_mut(){companion.snapshot["closed"]=serde_json::json!(true);}}}hide_surfaces(&app);},

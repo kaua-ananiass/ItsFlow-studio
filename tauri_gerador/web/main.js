@@ -2995,6 +2995,7 @@ async function runImageRecognitionTest(values, options = {}) {
     );
     const result = await invoke("test_image_recognition", {
       imagem: imagePath,
+      telaInteira: options.inheritWindowFallback === false,
       timeout: parseNumber(values.timeout, 10),
       confianca: parseNumber(values.confidence, 0.8),
       perfilBusca: normalizeRecognitionProfile(values.searchProfile, "balanced"),
@@ -3681,7 +3682,33 @@ function centerFirstAssistOrder(behavior = "auto") {
   centerAssistOrder(firstAssistOrder, behavior);
 }
 
-const assistCanvasView = {x:0,y:0,scale:1,drag:null,initialized:false,order:null,frame:0};
+const assistCanvasView = {x:0,y:0,scale:1,drag:null,initialized:false,order:null,frame:0,width:0,height:0,signature:''};
+function fitAssistCanvasWhenVisible(){
+  const stage=assistMapList?.querySelector('.assist-canvas-stage');
+  if(!stage||state.activeTab!=='assist')return false;
+  const viewportWidth=assistMapList.clientWidth,viewportHeight=assistMapList.clientHeight;
+  // Hidden startup tabs report 0 x 0. Wait for their actual visible layout.
+  if(viewportWidth<260||viewportHeight<260)return false;
+  const nodes=[...stage.querySelectorAll('.assist-real-node')];
+  const width=nodes.length?Math.max(...nodes.map(node=>node.offsetLeft+node.offsetWidth))+48:stage.offsetWidth;
+  const height=nodes.length?Math.max(...nodes.map(node=>node.offsetTop+node.offsetHeight))+32:stage.offsetHeight;
+  if(!width||!height)return false;
+  if(!assistCanvasView.initialized){
+    const top=120,bottom=210;
+    assistCanvasView.scale=Math.max(.35,Math.min(.9,(viewportWidth-96)/width,Math.max(160,viewportHeight-top-bottom)/height));
+    assistCanvasView.x=(viewportWidth-width*assistCanvasView.scale)/2;
+    assistCanvasView.y=top+Math.max(0,(viewportHeight-top-bottom-height*assistCanvasView.scale)/2);
+    assistCanvasView.initialized=true;
+  }else if(assistCanvasView.width&&assistCanvasView.height){
+    assistCanvasView.x+=(viewportWidth-assistCanvasView.width)/2;
+    assistCanvasView.y+=(viewportHeight-assistCanvasView.height)/2;
+  }
+  assistCanvasView.width=viewportWidth;assistCanvasView.height=viewportHeight;
+  applyAssistCanvasView();return true;
+}
+if(assistMapList&&typeof ResizeObserver!=='undefined'){
+  new ResizeObserver(()=>{fitAssistCanvasWhenVisible();}).observe(assistMapList);
+}
 function applyAssistCanvasView(){
   const stage=assistMapList?.querySelector('.assist-canvas-stage');
   if(stage)stage.style.transform=`translate(${assistCanvasView.x}px,${assistCanvasView.y}px) scale(${assistCanvasView.scale})`;
@@ -3731,6 +3758,8 @@ function setAssistMenuOpen(open,restoreFocus=false){
 function renderAssistExecutionMap() {
   syncAssistAutomationName();
   const events=getAssistRoadmapEvents();syncAssistTheme();
+  const signature=JSON.stringify([state.library.activeId,events.map(event=>[event.id,event.order,event.sequence])]);
+  if(signature!==assistCanvasView.signature){assistCanvasView.initialized=false;assistCanvasView.width=0;assistCanvasView.height=0;assistCanvasView.signature=signature;}
   if(!events.length){assistMapList.innerHTML='<div class="empty-state">Adicione blocos ao roteiro para acompanhar a execução.</div>';assistCanvasView.initialized=false;return;}
   const sequences=[...new Set(events.map(event=>normalizeSequenceName(event.sequence)))];
   const context={orderToEvent:new Map(events.map(e=>[Number(e.order),e])),orderToIndex:new Map(events.map((e,i)=>[Number(e.order),i])),seen:new Set()};
@@ -3794,17 +3823,14 @@ function renderAssistExecutionMap() {
   hydrateRecognitionPreviewCards(assistMapList);
   applyAssistCanvasView();
   requestAnimationFrame(()=>{
-    if(!assistCanvasView.initialized){
-      assistCanvasView.scale=Math.max(.35,Math.min(.9,(assistMapList.clientWidth-160)/width,(assistMapList.clientHeight-220)/height));
-      assistCanvasView.x=(assistMapList.clientWidth-width*assistCanvasView.scale)/2;
-      assistCanvasView.y=(assistMapList.clientHeight-height*assistCanvasView.scale)/2;
-      assistCanvasView.initialized=true;applyAssistCanvasView();
-    }else if(state.assist.mode==='running'&&assistCanvasView.order!==state.assist.currentOrder&&!assistCanvasView.drag)centerAssistOrder(state.assist.currentOrder);
+    if(!fitAssistCanvasWhenVisible())return;
+    if(state.assist.mode==='running'&&assistCanvasView.order!==state.assist.currentOrder&&!assistCanvasView.drag)centerAssistOrder(state.assist.currentOrder);
     assistCanvasView.order=state.assist.currentOrder;
   });
 }
 
 function centerAssistOrder(order, behavior = 'smooth') {
+  if(!fitAssistCanvasWhenVisible())return;
   const target=assistMapList?.querySelector(`[data-assist-order="${Number(order)}"]`);if(!target)return;
   const x=Number(target.dataset.canvasX),y=Number(target.dataset.canvasY);
   assistCanvasView.x=assistMapList.clientWidth/2-(x+118)*assistCanvasView.scale;
@@ -3989,6 +4015,14 @@ async function runScreenOcrDiagnostic({ values, texts, options }) {
     const ok = await runImageRecognitionTest({ ...values, recognitionMode: "imagem" }, testOptions);
     return { ok: Boolean(ok), results: [{ text: "Imagem de referência", found: Boolean(ok) }] };
   }
+  if (values.imagePath) {
+    // Imagem + OCR must validate the complete reference, including its icon.
+    // Never discard imagePath merely because the block has OCR targets.
+    const ok = Boolean(await runImageRecognitionTest({...values,recognitionMode:"texto_ocr",ocrText:texts.join("\n")},testOptions));
+    if (!ok) return {ok:false,results:texts.map(text=>({text,found:false})),visualRequired:true};
+    const capture = values.ocrTargetLayouts?.[0]?.capture;
+    if (!capture?.enabled) return {ok:true,results:texts.map(text=>({text,found:true,markerShown:true})),visualRequired:true};
+  }
   const capture = values.ocrTargetLayouts?.[0]?.capture;
   if (capture?.enabled) {
     return invoke("test_screen_variable_capture", {reference: texts[0], texts, capture: {...capture, referenceImage: values.imagePath || "", referenceText: texts[0]}});
@@ -4041,7 +4075,7 @@ async function runChosenOcrTest(mode) {
       icon.textContent = markerShown ? "✓" : "!";
       const copy = document.createElement("span");
       const heading = document.createElement("strong");
-      heading.textContent = markerShown ? "OCR encontrado na tela" : "OCR encontrado, sem destaque";
+      heading.textContent = result.visualRequired ? "Imagem e OCR confirmados na tela" : markerShown ? "OCR encontrado na tela" : "OCR encontrado, sem destaque";
       const detail = document.createElement("small");
       detail.textContent = markerShown
         ? "Alvo destacado em azul durante o teste."
