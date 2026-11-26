@@ -76,6 +76,25 @@ def testar_variavel_na_tela(executor, request):
 
 
 
+def testar_textos_sem_imagem(executor, request):
+    """Same pure-OCR probe as test_ocr_recognition, without any configured actions."""
+    text=str(request.get('texto_ocr_busca') or request.get('texto_ocr_esperado') or '').strip()
+    texts=[value.strip() for value in text.splitlines() if value.strip()]
+    if not texts:raise ValueError('Informe um texto OCR para testar.')
+    found=[]
+    for value in texts:
+        result=executor.executar_bloco_procurar_texto_ocr({'ordem':0,'tipo':'clicar_imagem','detalhes':{
+            'modo_reconhecimento':'texto_ocr','texto':value,'texto_ocr_busca':value,
+            'acao':'localizar','acao_ocr':'localizar','clicar':False,'cliques':0,
+            'teste_reconhecimento_ocr':True,'fonte_ocr':'legado',
+            'timeout':min(4,max(.1,float(request.get('timeout',4)))),
+            'confianca':request.get('confianca',.72),'janela_alvo':request.get('janela_alvo',''),
+            'quantidade_tentativas':1,'intervalo_tentativas':0,'varredura_scroll':False,
+            'ao_nao_encontrar':'parar','ao_sucesso':'continuar'}})
+        found.append(result.get('acao')!='parar')
+    return all(found)
+
+
 def main():
     executor = ExecutorAutomacao(
         arquivo_mapeamento=ROOT / "mapeamento_teclado.json",
@@ -106,6 +125,10 @@ def main():
         try:
             request = json.loads(linha)
             executor.janela_alvo = str(request.get("janela_alvo") or "").strip()
+            full_screen=bool(request.get('tela_inteira'))
+            executor._desktop_tela_livre=full_screen
+            executor._desktop_bloco_sem_alvo=full_screen
+            if full_screen:executor._janela_contexto=''
             modo_reconhecimento = str(request.get("modo_reconhecimento") or "").strip().lower()
             texto_ocr = str(request.get("texto_ocr_busca") or request.get("texto_ocr_esperado") or "").strip()
             timeout_solicitado = float(request.get("timeout", 10) or 10)
@@ -117,6 +140,10 @@ def main():
             limite_teste = 10.0 if texto_ocr else 2.5
             timeout_teste = min(max(0.1, timeout_solicitado), limite_teste)
             with contextlib.redirect_stdout(logs):
+                if not request.get('imagem') and texto_ocr:
+                    sucesso=testar_textos_sem_imagem(executor,request)
+                    responder({'success':bool(sucesso),'stdout':logs.getvalue(),'stderr':''})
+                    continue
                 sucesso = executor.testar_reconhecimento(
                     imagem=request.get("imagem", ""),
                     timeout=timeout_teste,
@@ -128,7 +155,7 @@ def main():
                     modo_area_busca=request.get("modo_area_busca") or "target_window",
                     area_personalizada=request.get("area_personalizada") or {},
                     texto_ocr_esperado=texto_ocr,
-                    leitura_relativa=request.get("leitura_relativa") or {},
+                    leitura_relativa={**(request.get("leitura_relativa") or {}),**({'_teste_tela_inteira':True} if full_screen else {})},
                     mostrar_marcador=True,
                     marcador_bloqueante=True,
                     # O Studio volta da minimizacao ao receber esta resposta.

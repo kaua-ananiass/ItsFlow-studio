@@ -2662,6 +2662,62 @@ class ExecutorAutomacao:
         })
         return confirmado
 
+    def confirmar_contexto_visual_fora_ocr(self, local, caminho_referencia, leitura_relativa=None):
+        """Text cannot compensate for a missing icon in the saved reference."""
+        if not OPENCV_DISPONIVEL or np is None:return True
+        try:
+            with Image.open(caminho_referencia) as image:
+                reference=cv2.cvtColor(np.array(image.convert('RGB')),cv2.COLOR_RGB2GRAY)
+        except Exception:
+            # The upstream image matcher owns image loading/validity checks.
+            return True
+        height,width=reference.shape
+        config=leitura_relativa or {}
+        if not (config.get('largura') or config.get('ocr_target_layouts')):return True
+        mask=np.ones((height,width),dtype=np.uint8)
+        count=max(1,len(config.get('ocr_target_layouts') or []))
+        for index in range(count):
+            box=self.regiao_referencia_alvo_ocr(index,config,(width,height))
+            if box:
+                x,y,w,h=box;mask[max(0,y-2):min(height,y+h+2),max(0,x-2):min(width,x+w+2)]=0
+        edges=cv2.Canny(reference,30,100);edges[mask==0]=0
+        total,components,stats,_=cv2.connectedComponentsWithStats(edges,8)
+        features=[]
+        for i in range(1,total):
+            x,y,w,h,area=stats[i]
+            # One-pixel fragments from antialiasing or a clipped text mask
+            # are not independent symbols (e.g. the top of a magnifier).
+            if area>=12 and w>=4 and h>=4 and x>0 and y>0 and x+w<width and y+h<height:features.append(i)
+        if not features:return True
+        try:
+            x,y,w,h=self.bounds_reconhecimento(local)
+            patch,_,_=self.capturar_tela_pil(region=(x,y,w,h))
+            gray=cv2.cvtColor(np.array(patch.convert('RGB')),cv2.COLOR_RGB2GRAY)
+            gray=cv2.resize(gray,(width,height),interpolation=cv2.INTER_LINEAR)
+            patch_edges=cv2.Canny(gray,30,100);patch_edges[mask==0]=0
+            kernel=np.ones((3,3),np.uint8)
+            # The OCR anchor and edge matcher can differ by a few pixels at
+            # another DPI. Align all symbols together, rather than demanding
+            # identical pixel coordinates or loosening their shape threshold.
+            feature_masks=[]
+            for component in features:
+                expected=(components==component).astype(np.uint8)*255
+                feature_masks.append((expected,cv2.dilate(expected,np.ones((5,5),np.uint8))>0,cv2.dilate(expected,kernel)>0))
+            for dy in (0,-1,1,-2,2,-3,3):
+                for dx in (0,-1,1,-2,2,-3,3):
+                    aligned=cv2.warpAffine(patch_edges,np.float32([[1,0,dx],[0,1,dy]]),(width,height),borderMode=cv2.BORDER_CONSTANT)
+                    tolerant_patch=cv2.dilate(aligned,kernel)
+                    valid=True
+                    for expected,region_mask,tolerant_expected in feature_masks:
+                        observed=(aligned>0)&region_mask
+                        recall=float(np.count_nonzero((expected>0)&(tolerant_patch>0)))/max(1,int(np.count_nonzero(expected)))
+                        precision=float(np.count_nonzero(observed&tolerant_expected))/max(1,int(np.count_nonzero(observed)))
+                        if recall<.65 or precision<.55:valid=False;break
+                    if valid:return True
+            safe_print('Hibrido: texto encontrado, mas o simbolo ou detalhe fora do OCR nao corresponde a imagem.',flush=True)
+            return False
+        except Exception:return False
+
     def confirmar_visual_proximo_ocr(self, local, caminho_referencia, region=None):
         """Confere bordas da referencia somente junto ao texto OCR confirmado.
 
@@ -3460,7 +3516,7 @@ class ExecutorAutomacao:
                     marcar=False,
                     permitir_equivalencia_visual=False,
                 )
-                if texto_confirmado:
+                if texto_confirmado and self.confirmar_contexto_visual_fora_ocr(visual_primeiro,caminho_referencia,leitura_configurada):
                     texto_confirmado["visual_confirmed"] = True
                     texto_confirmado["ocr_layout_targets_marked"] = False
                     texto_confirmado["search_stage"] = "visual_ocr_hybrid"
@@ -3522,7 +3578,7 @@ class ExecutorAutomacao:
                     region=region,
                     retornar_candidatos=True,
                     marcar_candidatos=False,
-                    limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
+                    limite_candidatos=8 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 12,
                     layout_alvos=layout_alvos,
                     _escala_ocr=_escala_ocr,
                     _tentativa_ampliada=bool(_escala_ocr is not None),
@@ -3535,7 +3591,7 @@ class ExecutorAutomacao:
                     region=region,
                     retornar_candidatos=True,
                     marcar_candidatos=False,
-                    limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
+                    limite_candidatos=8 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 12,
                     _escala_ocr=_escala_ocr,
                     _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
@@ -3631,7 +3687,7 @@ class ExecutorAutomacao:
             visual_bordas = self.confirmar_visual_proximo_ocr(
                 local, caminho_referencia, region=region,
             )
-            if visual_bordas and not self.cancelamento_solicitado():
+            if visual_bordas and not self.cancelamento_solicitado() and self.confirmar_contexto_visual_fora_ocr(visual_bordas,caminho_referencia,leitura_configurada):
                 texto_no_controle = self.confirmar_alvos_ocr_por_layout_visual(
                     visual_bordas,
                     texto_esperado=esperado,
@@ -3740,6 +3796,8 @@ class ExecutorAutomacao:
                     return None
                 if not visual:
                     continue
+
+                if not self.confirmar_contexto_visual_fora_ocr(visual,caminho_referencia,leitura_configurada):continue
 
                 vx, vy, vw, vh = self.bounds_reconhecimento(visual)
                 centro_visual_x = vx + (vw / 2.0)
@@ -10594,6 +10652,7 @@ class ExecutorAutomacao:
         duracao_marcador=0.24,
     ):
         leitura_relativa = dict(leitura_relativa or {})
+        teste_tela_inteira=bool(leitura_relativa.get('_teste_tela_inteira')) and bool(getattr(self,'modo_teste_reconhecimento',False))
         leitura_relativa["_mostrar_marcadores_ocr"] = bool(mostrar_marcador)
         leitura_relativa["_testar_todos_alvos_ocr"] = bool(
             texto_ocr_esperado and self.modo_acao_alvos_ocr(leitura_relativa) == "individual"
@@ -10623,6 +10682,7 @@ class ExecutorAutomacao:
         # sem ativa-la, move-la ou depender do titulo antigo.
         if (
             bool(getattr(self, "modo_teste_reconhecimento", False))
+            and not teste_tela_inteira
             and self.normalizar_modo_area_busca(modo_area_busca) == "target_window"
         ):
             janela_ativa_teste = self.obter_janela_ativa()
